@@ -675,7 +675,7 @@ NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME
 VOID hookKeBugCheckEx(IN ULONG BugCheckCode,IN ULONG_PTR BugCheckParameter1,IN ULONG_PTR BugCheckParameter2,IN ULONG_PTR BugCheckParameter3,IN ULONG_PTR BugCheckParameter4) {
   // Attempt to push our last debug stuff
   leds(0xFF);
-  if (KeGetCurrentIrql != PASSIVE_LEVEL) {
+  if (he->KeGetCurrentIrql() != PASSIVE_LEVEL) {
     he->KfLowerIrql(PASSIVE_LEVEL);
   }
   char x[100];
@@ -685,7 +685,6 @@ VOID hookKeBugCheckEx(IN ULONG BugCheckCode,IN ULONG_PTR BugCheckParameter1,IN U
   p = symbol(p,'\n');
   appendFile(he->crash,x);
   //FIXME: Wait for the write to complete?!
-  // No point in returning :(
   int t = 0; 
   //FIXME: Wait instead and then turn the LED on once, maybe we are still running something in another thread?!
   while(t++ < 1000) { leds(0xFF); } // Not sure where HalHaltSystem is - so this will have to do :P
@@ -693,11 +692,12 @@ VOID hookKeBugCheckEx(IN ULONG BugCheckCode,IN ULONG_PTR BugCheckParameter1,IN U
   //FIXME: Does not work.. WHY?!
   __asm__ __volatile__("movw $0x0CF9,%%dx\n" // Reset register
                        "movb $0x0E,%%al\n" //  "Reset everything" option
-                       "outb %%al,%%dx\n"
+                       "outb %%al,(%%dx)\n"
                        "resetLoop:\n"
                        "cli\n"
                        "hlt\n"
                        "jmp resetLoop":);
+  // No point in returning :(
 }
 
 NTSTATUS NTAPI hookExQueryNonVolatileSetting(IN  DWORD               ValueIndex,	OUT DWORD              *Type,	OUT PUCHAR              Value,	IN  SIZE_T              ValueLength,	OUT PSIZE_T             ResultLength OPTIONAL) {
