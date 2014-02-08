@@ -59,7 +59,7 @@
       *p = (uintptr_t)code - kernel;
     } else {
       if ((code[0] == 0xCC) && (code[1] == 0xE9)) { // For call this has to be 0xE8
-        uint32_t address = &code[1];
+        uint32_t address = (uintptr_t)&code[1];
         uint32_t target = *(uint32_t*)&code[2];
         uint32_t original = target+address+5;
         *p = original - kernel;

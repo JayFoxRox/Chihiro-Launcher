@@ -22,8 +22,9 @@
 
   WIP:
     
+    - Breakpoints to see where things go bad
     - Buffer output on my own and only write to disk on PASSIVE_LEVEL
-    - Somehow hook or HLE the in / out instructions
+    - Somehow hook or HLE the in / out instructions < done for up to 4 addresses at a time
       - Emulate Baseboard, possibly using dolphin as code base
 
   TODO (In no particular order, but research should always be first):
@@ -117,7 +118,9 @@
 
 #define PCI_SLOT(device, function) (((function) << 5) | (device))
 
-#include "x86.h"
+#include "common/x86Types.h"
+#include "common/x86Encode.h"
+#include "common/x86.h"
 #include "fix.h"
 #include "mount.h"
 #include "launch.h"
@@ -257,9 +260,9 @@ void XBoxStartup(void) {
 
 //TODO: Reboot if saveddataaddress is != 0?!
   //TODO: move to fix.h?
-  MmQueryAddressProtectFix = &MmQueryAddressProtect;
-  KeRaiseIrqlToDpcLevelFix = &KeRaiseIrqlToDpcLevel;
-  KfLowerIrqlFix = &KfLowerIrql;
+  MmQueryAddressProtectFix = (void*)&MmQueryAddressProtect;
+  KeRaiseIrqlToDpcLevelFix = (void*)&KeRaiseIrqlToDpcLevel;
+  KfLowerIrqlFix = (void*)&KfLowerIrql;
 
   FILE* f = fopen("E:\\chihiro\\log.txt","w");
   fprintf(f,"Failed to log!\n");
@@ -280,7 +283,7 @@ void* kernelsp = resizeKernel();
 //void* handler = createDR();
 
 uintptr_t data = (uintptr_t)&KeTickCount;
-PKDEBUG_ROUTINE* ptrKiDebugRoutine = (uintptr_t*)(data+64);
+PKDEBUG_ROUTINE* ptrKiDebugRoutine = (PKDEBUG_ROUTINE*)(data+64);
 
 { 
   printf("Debug routine supposed to be at 0x%08X, KdDebuggerEnabled: 0x%08X\n",*ptrKiDebugRoutine,KdDebuggerEnabled);
@@ -336,9 +339,9 @@ enableSafemode();
 
 
 
-	uintptr_t addr = *ptrKiDebugRoutine; // Get the stub
+	uintptr_t addr = (uintptr_t)*ptrKiDebugRoutine; // Get the stub
 
-	uint8_t* code = addr;
+	uint8_t* code = (uint8_t*)addr;
 #if 0
 	setPopEax((void*)&code[0]);
 	setPush((void*)&code[1],transportData);
@@ -348,6 +351,8 @@ enableSafemode();
   encodeJmp((void*)&code[0],(uintptr_t)kernelsp+(uintptr_t)hookKiDebugRoutine-(uintptr_t)hookBase);
 #endif
 
+  code = (void*)&KeBugCheckEx;
+  encodeJmp((void*)&code[0],(uintptr_t)kernelsp+(uintptr_t)hookKeBugCheckEx-(uintptr_t)hookBase);
 
 HookEnvironment_t* hookEnvironment = hook(kernelsp);
 
@@ -368,13 +373,13 @@ uint32_t gdtBase;
 getGdt(&gdtLimit,&gdtBase);
 
 // Locate the descriptors
-GdtDescriptor_t* csDescriptor= gdtBase+cs;
-GdtDescriptor_t* dsDescriptor= gdtBase+ds;
-GdtDescriptor_t* ssDescriptor= gdtBase+ss;
-GdtDescriptor_t* trDescriptor= gdtBase+tr;
+GdtDescriptor_t* csDescriptor= (GdtDescriptor_t*)(gdtBase+cs);
+GdtDescriptor_t* dsDescriptor= (GdtDescriptor_t*)(gdtBase+ds);
+GdtDescriptor_t* ssDescriptor= (GdtDescriptor_t*)(gdtBase+ss);
+GdtDescriptor_t* trDescriptor= (GdtDescriptor_t*)(gdtBase+tr);
 
 // Locate the TSS
-Tss_t* tss = (trDescriptor->baseFF000000 << 24) | trDescriptor->base00FFFFFF;
+Tss_t* tss = (Tss_t*)((trDescriptor->baseFF000000 << 24) | trDescriptor->base00FFFFFF);
 
 // Create temporary GDT
 //NOTE: Allocated here because kernel calls won't be available soon
@@ -383,12 +388,12 @@ void* temporaryGdt = MmAllocateContiguousMemory(gdtLimit+sizeof(GdtDescriptor_t)
 // This is a TSS which will just return when jumped to
 Tss_t* temporaryTss = MmAllocateContiguousMemory(sizeof(Tss_t));
 memcpy(temporaryTss,tss,sizeof(Tss_t));
-temporaryTss->eip = iretLoop;
+temporaryTss->eip = (uintptr_t)iretLoop;
 //FIXME: Setup ESP and EFLAGS?
 
 // Append our own descriptor for a TSS we can switch to, to force a reload of the TSS
 //NOTE: We overwrote some random kernel variable here! Don't do anything with kernel!
-GdtDescriptor_t* temporaryTrDescriptor = (uintptr_t)gdtBase+gdtLimit;
+GdtDescriptor_t* temporaryTrDescriptor = (GdtDescriptor_t*)((uintptr_t)gdtBase+gdtLimit);
 GdtDescriptor_t backup;
 memcpy(&backup,temporaryTrDescriptor,sizeof(GdtDescriptor_t));
 memcpy(temporaryTrDescriptor,trDescriptor,sizeof(GdtDescriptor_t));
@@ -401,8 +406,8 @@ temporaryTrDescriptor->base00FFFFFF = (uintptr_t)temporaryTss;
 	setGdt(gdtLimit+sizeof(GdtDescriptor_t),gdtBase);
 	lcall(gdtLimit,0); 
 */
-memcpy(temporaryGdt,gdtBase,gdtLimit+sizeof(GdtDescriptor_t));
-setGdt(gdtLimit+sizeof(GdtDescriptor_t),temporaryGdt);
+memcpy(temporaryGdt,(void*)gdtBase,gdtLimit+sizeof(GdtDescriptor_t));
+setGdt(gdtLimit+sizeof(GdtDescriptor_t),(uintptr_t)temporaryGdt);
 lcall(gdtLimit,0);
 
 // Create our new TSS
@@ -773,7 +778,8 @@ AV_QUERY_AV_CAPABILITIES
 
 */
 
-    sprintf(buffer,"Hold A for Testmode: %s\n"
+    sprintf(buffer,"Compile time: " __TIME__ " (" __DATE__ ")\n\n"
+                   "Hold A for Testmode: %s\n"
                    "Hold B for MAME Hack: %s\n"
                    "Hold X for Memory Hack: %s\n"
                    "Hold Y for Devkit fake: %s\n"

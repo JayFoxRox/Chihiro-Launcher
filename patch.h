@@ -62,7 +62,7 @@ void* expand_kernel(void) {
 .local_var_size		equ -.expansion_end_addr_ex
 */
 	
-  uintptr_t* KI_top_var_addr;
+  uintptr_t KI_top_var_addr;
   uintptr_t moveSavedData;
   if (getKernelPointers(&KI_top_var_addr,&moveSavedData) == false) {
     printf("Aborting!\n");
@@ -78,22 +78,22 @@ void* expand_kernel(void) {
 	uint32_t top_addr = *(uint32_t*)KI_top_var_addr; // End of kernel
 	uint32_t expansion_end_addr_ex = top_addr + KI_expansion_size; // New end of kernel after expansion
 	
-  uint32_t edi = AvGetSavedDataAddress(); // Check if we have GPU data
+  uintptr_t edi = (uintptr_t)AvGetSavedDataAddress(); // Check if we have GPU data
   if (edi != 0) {
 
-	  uint32_t esi =	MmQueryAllocationSize(edi);
-	  uint32_t eax = MmGetPhysicalAddress(edi); // Get the location of saved data
-    uint32_t edx = eax+esi; // End of saved data
+	  uint32_t esi =	MmQueryAllocationSize((void*)edi);
+	  uintptr_t eax = MmGetPhysicalAddress((void*)edi); // Get the location of saved data
+    uintptr_t edx = eax+esi; // End of saved data
 
 	  if (expansion_end_addr_ex <= eax) { goto expand; } // If it's above the new kernel: OK!
  	  if (edx <= top_addr) { goto expand; } // If it's below the new kernel: OK!
 	
     // If it's coliding with the area we want to modify we have to allocate more space so we can move it
   
-    edi = MmAllocateContiguousMemoryEx(esi,0,-1,0,0x404); // Reserve memory to move the data to
-    if (edi == NULL) { goto error; }
+    edi = (uintptr_t)MmAllocateContiguousMemoryEx(esi,0,-1,0,0x404); // Reserve memory to move the data to
+    if ((void*)edi == NULL) { goto error; }
 
-	  eax = MmGetPhysicalAddress(edi);
+	  eax = (uintptr_t)MmGetPhysicalAddress((void*)edi);
 
 	  edx = eax+esi; // End of new saved data
 	  if (expansion_end_addr_ex <= eax) { goto movedata; } // If it's above the new kernel: OK!
@@ -103,22 +103,22 @@ void* expand_kernel(void) {
 
     printf("Fucked! KernelMoveSavedData\n");
 //    return NULL;
-    NTAPI VOID (*AvRelocateSavedDataAddress)(IN PVOID NewAddress, IN SIZE_T NumberOfBytes) = moveSavedData;
-    AvRelocateSavedDataAddress(edi,esi); // Move memory to new location
+    NTAPI VOID (*AvRelocateSavedDataAddress)(IN PVOID NewAddress, IN SIZE_T NumberOfBytes) = (void*)moveSavedData;
+    AvRelocateSavedDataAddress((void*)edi,esi); // Move memory to new location
 
   }
   
 expand:;
-  uint32_t KI_expd_space = MmAllocateContiguousMemoryEx(KI_expansion_size,top_addr,expansion_end_addr_ex-1,0,4);
-  if (KI_expd_space == NULL) { goto error; }
+  uint32_t KI_expd_space = (uintptr_t)MmAllocateContiguousMemoryEx(KI_expansion_size,top_addr,expansion_end_addr_ex-1,0,4);
+  if ((void*)KI_expd_space == NULL) { goto error; }
 
-  *KI_top_var_addr = top_addr + KI_expansion_size;
+  /*FIXME: > * < this used to be here.. why? */ KI_top_var_addr = top_addr + KI_expansion_size;
 		
-  MmPersistContiguousMemory(KI_expd_space,KI_expansion_size,TRUE);
+  MmPersistContiguousMemory((void*)KI_expd_space,KI_expansion_size,TRUE);
 
   printf("New space allocated at 0x%08X\n",KI_expd_space);
 
-  return KI_expd_space;
+  return (void*)KI_expd_space;
 
 error:	
 	printf("Something went wrong!\n");
@@ -217,16 +217,16 @@ void patchheaders(void) {
 
 #if 1
   // This is probably some .text or .data section?!
-  uint32_t* s0VirtualSize = section+0x8;
-  uint32_t* s0SizeOfRawData = section+0x10;
+  uint32_t* s0VirtualSize = (uint32_t*)(section+0x8);
+  uint32_t* s0SizeOfRawData = (uint32_t*)(section+0x10);
 	*s0VirtualSize += KI_expansion_size;			//; VirtualSize
 	*s0SizeOfRawData += KI_expansion_size;			//; SizeOfRawData
 
   // Last section is always init in xbox kernel
-  uint32_t* s1VirtualSize = section+0x28+0x8;
-  uint32_t* s1SizeOfRawData = section+0x28+0x10;
-  uint32_t* s1VirtualAddress = section+0x28+0xC;
-  uint32_t* s1PointerToRawData = section+0x28+0x14;
+  uint32_t* s1VirtualSize = (uint32_t*)(section+0x28+0x8);
+  uint32_t* s1SizeOfRawData = (uint32_t*)(section+0x28+0x10);
+  uint32_t* s1VirtualAddress = (uint32_t*)(section+0x28+0xC);
+  uint32_t* s1PointerToRawData = (uint32_t*)(section+0x28+0x14);
   *s1VirtualSize -= KI_expansion_size;			// INIT section VirtualSize 
   *s1SizeOfRawData -= KI_expansion_size;		// INIT section SizeOfRawData
 printf("New .init size is 0x%08X / 0x%08X\n",*s1VirtualSize,*s1SizeOfRawData);

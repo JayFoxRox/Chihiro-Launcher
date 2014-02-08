@@ -13,6 +13,9 @@
 // unused sections / data (Both, strip and don't copy headers).
 // The relocator should be copied from Cxbe. It has proven to work..
 
+
+//NOTE: these seem to work (most of the time): __builtin_return_address(0),__builtin_return_address(1),__builtin_return_address(2),...
+
 typedef struct {
 
 	// Imports
@@ -61,6 +64,7 @@ typedef struct {
     Tss_t tss;
     uint8_t iomap[0x4100/8];  
   };
+  uint8_t chihiroXboxEeprom[0x100];
   char crash[80];
   struct {
     char stringEip[10];
@@ -109,13 +113,7 @@ typedef struct {
 
 #include <stdint.h>
 
-#define STRING(var,text) \
-const char* var; \
-__asm__ __volatile__("call next\n" \
-                     "dat: .asciz \"" text "\"\n" \
-                     "next:\n" \
-                     "pop %%eax" \
-                     :"=a"(var));
+
 
 HookEnvironment_t* hook(void* base); //FIXME: Rename to hookDetour or something?
 
@@ -124,6 +122,7 @@ void hookEnvironment(void);
 
 uintptr_t volatile hookBase(void) {
   //FIXME: Somehow put this into a getEip() macro?
+  //NOTE: Don't use the existing getEip macro here - this couldn't call it because it wouldn't be within the hook-space
   __asm__ __volatile__("call eip\n"
                        "eip:\n"
                        "pop %%eax\n"
@@ -132,6 +131,9 @@ uintptr_t volatile hookBase(void) {
                        "ret":);
 }
 
+
+//NOTE: Don't move this! It must be below hookBase!
+#include "common/string.h"
 
 void installIoDebugger(void) {
 
@@ -178,41 +180,27 @@ void installIoDebugger(void) {
 
 }
 
+typedef struct {
+  uintptr_t address;
+  uint8_t value;
+} Breakpoint_t;
 
-// Positive length = Print bytes normally
-// Negative length = Print bytes in reverse order
-char* hexString(char* s, uint8_t* data, signed int length) { 
-  int i;
-  for(i = 0; i < ((length>0)?length:-length)*2; i++) {
-    uint8_t value = data[(length>0)?(i/2):(~length-(i/2))];
-    uint8_t digit = (value >> (((i+1)%2)*4)) & 0xF;
-    if (digit <= 0x9) {
-      s[i] = '0' + (digit-0);
-    } else {
-      s[i] = 'A' + (digit-0xA);
-    }
+void enableBreakpoint(Breakpoint_t* breakpoint, bool enabled) {
+  uint8_t* code = (uint8_t*)breakpoint->address;
+/*
+  if (*code != 0xCC) {
+    breakpoint->value = *code;
   }
-  s[i] = '\0';
-  return &s[i];
+*/
+  *code = enabled?0xCC:breakpoint->value;
+  return;
 }
 
-char* symbol(char* s, char symbol) {
-  *s++ = symbol;
-  *s = '\0';
-  return s;
+void installBreakpoints() {
+//  *(uint8_t*)0xDEADBEEF = 0xCC; // Somewhere..
+  return;
 }
 
-char* copyLimitedString(char* s1, const char* s2, size_t size) {
-  while(*s2 && size) { *s1++ = *s2++; size--; }
-  *s1 = '\0';
-  return s1;
-}
-
-char* copyString(char* s1, const char* s2) {
-  while(*s2) { *s1++ = *s2++; }
-  *s1 = '\0';
-  return s1;
-}
 
 typedef struct {
   KDPC kdpc;
@@ -237,12 +225,6 @@ VOID __stdcall appendFileDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgum
 //	he->MmFreeContiguousMemory(dpcMemory);   //FIXME: Can I free the KDPC object memory here?!
 
   return;
-}
-
-size_t stringLength(char* s) {
-	size_t l = 0;
-  while(*s++) { l++; }
-	return l;
 }
 
 void forceAppendFile(const char* file, const char* text) {
@@ -306,7 +288,7 @@ return;
 
 
 
-	ret = he->NtWriteFile(fh,NULL,NULL,NULL,&ioStatusBlock,text,len,NULL);
+	ret = he->NtWriteFile(fh,NULL,NULL,NULL,&ioStatusBlock,(char*)text,len,NULL);
 //printf("2: %X\n",ret);
 
 	ret = he->NtClose(fh);
@@ -351,9 +333,9 @@ char* stackDump(char* p, void* base, unsigned int depth) {
   uint8_t index;
   for(index = 1; index <= depth; index++) {
 	  p = symbol(p,'\t');	p = symbol(p,'\t');
-	  p = symbol(p,'['); p = decString(p,&index,-1);	p = symbol(p,']');
+	  p = symbol(p,'['); p = decString(p,(uint8_t*)&index,-1);	p = symbol(p,']');
 	  p = symbol(p,' ');
-	  p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,&stack[index-1],-4);
+	  p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&stack[index-1],-4);
 	  p = symbol(p,'\n');
   }
   return p;
@@ -373,15 +355,15 @@ char* stackTrace(char* p, PCONTEXT ContextRecord, unsigned int maximumDepth, uns
 			p = symbol(p,'\t');	p = symbol(p,'\t');
 			p = symbol(p,'B'); p = symbol(p,'B');	p = symbol(p,'a'); p = symbol(p,'s');	p = symbol(p,'e');
 			p = symbol(p,' ');
-			p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,&base,-4);
+			p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&base,-4);
 			p = symbol(p,'\n');
       break;
     }
 
-    uint32_t* stack = base;
+    uint32_t* stack = (uint32_t*)base;
     base = stack[0];
     uintptr_t returnTo = stack[1];
-    stackDump(p,&stack[2],contentDepth);
+    p = stackDump(p,&stack[2],contentDepth);
     if (contentDepth > 0) {
 			p = symbol(p,'\t');	p = symbol(p,'\t');
 			p = symbol(p,'.'); p = symbol(p,'.'); p = symbol(p,'.');
@@ -390,7 +372,7 @@ char* stackTrace(char* p, PCONTEXT ContextRecord, unsigned int maximumDepth, uns
 		p = symbol(p,'\t');
 		p = decString(p,&level,-1);	p = symbol(p,'.'); p = symbol(p,' '); 
 		p = symbol(p,'F'); p = symbol(p,'r');	p = symbol(p,'o'); p = symbol(p,'m'); p = symbol(p,':'); p = symbol(p,' ');
-		p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,&returnTo,-4);
+		p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&returnTo,-4);
 		p = symbol(p,'\n');
 
     if ((returnTo == 0xDEADC0DE) || (returnTo == 0)) { //FIXME: Should be looking for zero instead, but thread.c is using 0xDEADC0DE atm because it's easier to spot
@@ -414,94 +396,190 @@ char* timestamp(char* s) {
 }
 
 
-NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME ExceptionFrame,IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord, IN BOOLEAN SecondChance) {
+char* exceptionDump(char* p, IN PEXCEPTION_RECORD ExceptionRecord) {
 
-//LEDS(0x44);
+  p = symbol(p,'\n');
+  p = symbol(p,'\n');
+  p = timestamp(p);
 
-//he->RtlEnterCriticalSection(&he->critSect);
-installIoDebugger();
+  p = symbol(p,'\n');
+  p = copyString(p,he->stringXbe); p = copyLimitedString(p,he->XeImageFileName->Buffer,he->XeImageFileName->Length); p = symbol(p,'\n');
+  p = symbol(p,'\n');
+
+  p = copyString(p,he->stringExceptionCode); p = hexString(p,(uint8_t*)&ExceptionRecord->ExceptionCode,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringExceptionFlags); p = hexString(p,(uint8_t*)&ExceptionRecord->ExceptionFlags,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringExceptionRecord); p = hexString(p,(uint8_t*)&ExceptionRecord->ExceptionRecord,-4); p = symbol(p,'\n');
+  p = symbol(p,'\n');
+
+  return p;
+  
+}
+
+char* contextDump(char* p, IN PCONTEXT ContextRecord) {
+
+//FIXME: RtlSprintf and STRING()
+
+  if (he->KeGetCurrentIrql() > DISPATCH_LEVEL) {
+    leds(0xE1);
+  } else {
+
+    p = copyString(p,he->stringEip); p = hexString(p,(uint8_t*)&ContextRecord->SegCs,-2); p = symbol(p,':'); p = hexString(p,(uint8_t*)&ContextRecord->Eip,-4); p = symbol(p,'\n');
+    p = copyString(p,he->stringEsi); p = hexString(p,(uint8_t*)&ContextRecord->Esi,-4); p = symbol(p,'\n');
+    p = copyString(p,he->stringEdi); p = hexString(p,(uint8_t*)&ContextRecord->Edi,-4); p = symbol(p,'\n');
+    p = copyString(p,he->stringEbp); p = hexString(p,(uint8_t*)&ContextRecord->Ebp,-4); p = symbol(p,'\n');
+    p = copyString(p,he->stringEsp); p = hexString(p,(uint8_t*)&ContextRecord->SegSs,-2); p = symbol(p,':'); p = hexString(p,(uint8_t*)&ContextRecord->Esp,-4); p = symbol(p,'\n');
+    p = copyString(p,he->stringEax); p = hexString(p,(uint8_t*)&ContextRecord->Eax,-4); p = symbol(p,'\n');
+    p = copyString(p,he->stringEcx); p = hexString(p,(uint8_t*)&ContextRecord->Ecx,-4); p = symbol(p,'\n');
+    p = copyString(p,he->stringEdx); p = hexString(p,(uint8_t*)&ContextRecord->Edx,-4); p = symbol(p,'\n');
+    p = symbol(p,'\n');
+    p = copyString(p,he->stringCode); p = hexString(p,(uint8_t*)(ContextRecord->Eip-10),10); p = symbol(p,' '); p = hexString(p,(uint8_t*)ContextRecord->Eip,1); p = symbol(p,' '); p = hexString(p,(uint8_t*)(ContextRecord->Eip+1),10); p = symbol(p,'\n');
+    p = copyString(p,he->stringStack); p = hexString(p,(uint8_t*)(ContextRecord->Esp-10),10); p = symbol(p,' '); p = hexString(p,(uint8_t*)ContextRecord->Esp,1); p = symbol(p,' '); p = hexString(p,(uint8_t*)(ContextRecord->Esp+1),10); p = symbol(p,'\n');
+
+  }
+
+  return p;
+
+}
 
 
+uint32_t emulateIn(uint16_t port, uint8_t size) {
+  return 0xFFFFFFFF; // Same as if port is NC
+}
+
+void emulateOut(uint16_t port, uint8_t size, uint32_t value) {
+  return;
+}
+
+bool handleIO(IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord) {
+  //FIXME: Printing should be moved to the emulateIn / emulateOut routines
   if (ExceptionRecord->ExceptionCode == STATUS_SINGLE_STEP) {
     char x[100];
     char* p = timestamp(x);
-    uint8_t* code = ContextRecord->Eip;
+    uint8_t* code = (uint8_t*)ContextRecord->Eip;
     if (code[-1] == 0xED) {
       p = copyString(p,he->stringIn);
       if (code[-2] == 0x66) {
         // in %dx,%ax
         p = symbol(p,'w'); p = symbol(p,'=');
-        p = hexString(p,&ContextRecord->Edx,-2);
+        p = hexString(p,(uint8_t*)&ContextRecord->Edx,-2);
+//FIXME:        ContextRecord->Ax = emulateIn(ContextRecord->Edx & 0xFFFF,2);
       } else {
         // in %dx,%eax
         p = symbol(p,'l'); p = symbol(p,'=');
-        p = hexString(p,&ContextRecord->Edx,-2);
+        p = hexString(p,(uint8_t*)&ContextRecord->Edx,-2);
+//FIXME:        ContextRecord->Eax = emulateIn(ContextRecord->Edx & 0xFFFF,4);
       }
     } else if (code[-1] == 0xEC) {
       // in %dx,%al
       p = copyString(p,he->stringIn);
       p = symbol(p,'b'); p = symbol(p,'=');
-      p = hexString(p,&ContextRecord->Edx,-2);
+      p = hexString(p,(uint8_t*)&ContextRecord->Edx,-2);
+//FIXME:      ContextRecord->Al = emulateIn(ContextRecord->Edx & 0xFFFF,1);
     } else if (code[-1] == 0xEE) {
       // out    %al,(%dx)      
       p = copyString(p,he->stringOut);
-      p = hexString(p,&ContextRecord->Edx,-2); p = symbol(p,'=');
-      p = hexString(p,&ContextRecord->Eax,-1);
+      p = hexString(p,(uint8_t*)&ContextRecord->Edx,-2); p = symbol(p,'=');
+      p = hexString(p,(uint8_t*)&ContextRecord->Eax,-1);
+//FIXME:      emulateOut(ContextRecord->Edx & 0xFFFF,1,ContextRecord->Al);
     } else if (code[-1] == 0xEF) { 
       p = copyString(p,he->stringOut);
       if (code[-2] == 0x66) {
         // out    %ax,(%dx)
-        p = hexString(p,&ContextRecord->Edx,-2); p = symbol(p,'=');
-        p = hexString(p,&ContextRecord->Eax,-2);
+        p = hexString(p,(uint8_t*)&ContextRecord->Edx,-2); p = symbol(p,'=');
+        p = hexString(p,(uint8_t*)&ContextRecord->Eax,-2);
+//FIXME:        emulateOut(ContextRecord->Edx & 0xFFFF,2,ContextRecord->Ax);
       } else {
         // out    %eax,(%dx)
-        p = hexString(p,&ContextRecord->Edx,-2); p = symbol(p,'=');
-        p = hexString(p,&ContextRecord->Eax,-4);
+        p = hexString(p,(uint8_t*)&ContextRecord->Edx,-2); p = symbol(p,'=');
+        p = hexString(p,(uint8_t*)&ContextRecord->Eax,-4);
+        emulateOut(ContextRecord->Edx & 0xFFFF,4,ContextRecord->Eax);
       }
     } else {
       LEDS(0xE0)
       p = symbol(p,'\n');
       appendFile(he->crash,x);
-      return FALSE;
+      return false;
     }            	
     LEDS(0x0E)
     p = symbol(p,'\n');
     appendFile(he->crash,x);
-    return TRUE;    
+    return true;    
+  }
+  return false;
+}
+
+// This is not supposed to handle anything, so for the moment I figured I should always return false
+bool handleDebugPrint(IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord) {
+  if (ExceptionRecord->ExceptionCode == STATUS_BREAKPOINT) {
+    if (ExceptionRecord->NumberParameters > 0) {
+      if ((ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_PRINT) ||
+          (ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_KDPRINT)) {
+        leds(0xFF);
+        char x[200];
+        char* p = x;
+		    ANSI_STRING* tmp = (void*)ContextRecord->Ecx;
+
+		    p = copyString(p,he->stringPrint); p = symbol(p,'\'');
+        int l = tmp->Length;
+        if (l > 150) { l = 150; }
+		    if (tmp->Buffer) { p = copyLimitedString(p,(const char*)tmp->Buffer,l); }
+		    p = symbol(p,'\''); p = symbol(p,'\n');
+        appendFile(he->crash,x);
+      }
+	  }
+  }
+  return false;
+}
+
+bool handleDebug(IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord) {
+  //NOTE: This block is also what the xbox kernel would do without debugger!
+  if (ExceptionRecord->ExceptionCode == STATUS_BREAKPOINT) {
+    if (ExceptionRecord->NumberParameters > 0) {
+      if ((ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_LOAD_SYMBOLS)||(ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_UNLOAD_SYMBOLS) ||
+      (ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_LOAD_XESECTION)||(ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_UNLOAD_XESECTION) ||
+      (ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_PRINT) ||
+      (ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_KDPRINT)) {
+      	leds(0xF0);
+
+        ContextRecord->Eip++;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME ExceptionFrame,IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord, IN BOOLEAN SecondChance) {
+
+//LEDS(0x44);
+
+//he->RtlEnterCriticalSection(&he->critSect);
+
+  // Install our hacks (they should be installed already, but better safe than sorry)
+  installIoDebugger();
+  installBreakpoints();
+
+//FIXME: check if this is a Breakpoint_t-breakpoint..:
+// - Restore code
+// - Step
+// - Restore breakpoint
+
+  // Check if this is an I/O instruction
+  if (handleIO(ExceptionRecord,ContextRecord)) {
+    return TRUE;
   }
 
 
-  if (he->KeGetCurrentIrql > DISPATCH_LEVEL) {
-    leds(0xE1);
-  } else {
-    char* x = he->MmAllocateContiguousMemory(0x1000);
-    char* p;
+  // Add the exception information to our debug log
+  {
 
-    p = x; *p = '\0';
+    char* x = he->MmAllocateContiguousMemory(0x4000);
+    char* p = x; *p = '\0';
 
+    p = exceptionDump(p,ExceptionRecord);
+    appendFile(he->crash,x); p = x; *p = '\0';
 
-    p = symbol(p,'\n');
-    p = symbol(p,'\n');
-    p = timestamp(p);
-    p = symbol(p,'\n');
-    p = copyString(p,he->stringXbe); p = copyLimitedString(p,he->XeImageFileName->Buffer,he->XeImageFileName->Length); p = symbol(p,'\n');
-    p = symbol(p,'\n');
-    p = copyString(p,he->stringExceptionCode); p = hexString(p,&ExceptionRecord->ExceptionCode,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringExceptionFlags); p = hexString(p,&ExceptionRecord->ExceptionFlags,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringExceptionRecord); p = hexString(p,&ExceptionRecord->ExceptionRecord,-4); p = symbol(p,'\n');
-    p = symbol(p,'\n');
-    p = copyString(p,he->stringEip); p = hexString(p,&ContextRecord->SegCs,-2); p = symbol(p,':'); p = hexString(p,&ContextRecord->Eip,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEsi); p = hexString(p,&ContextRecord->Esi,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEdi); p = hexString(p,&ContextRecord->Edi,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEbp); p = hexString(p,&ContextRecord->Ebp,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEsp); p = hexString(p,&ContextRecord->SegSs,-2); p = symbol(p,':'); p = hexString(p,&ContextRecord->Esp,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEax); p = hexString(p,&ContextRecord->Eax,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEcx); p = hexString(p,&ContextRecord->Ecx,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEdx); p = hexString(p,&ContextRecord->Edx,-4); p = symbol(p,'\n');
-    p = symbol(p,'\n');
-    p = copyString(p,he->stringCode); p = hexString(p,ContextRecord->Eip-10,10); p = symbol(p,' '); p = hexString(p,ContextRecord->Eip,1); p = symbol(p,' '); p = hexString(p,ContextRecord->Eip+1,10); p = symbol(p,'\n');
-    p = copyString(p,he->stringStack); p = hexString(p,ContextRecord->Esp-10,10); p = symbol(p,' '); p = hexString(p,ContextRecord->Esp,1); p = symbol(p,' '); p = hexString(p,ContextRecord->Esp+1,10); p = symbol(p,'\n');
-
+    p = contextDump(p,ContextRecord);
     appendFile(he->crash,x); p = x; *p = '\0';
 
     p = symbol(p,'\n');
@@ -510,86 +588,62 @@ installIoDebugger();
 
     appendFile(he->crash,x); p = x; *p = '\0';
 
-    for(int i = 0; i < 10; i++){
-	    p = symbol(p,'-');	
+    for(int i = 0; i < 10; i++) {
+      p = symbol(p,'-');	
     }
     p = symbol(p,'\n');
 
     appendFile(he->crash,x);
 
     he->MmFreeContiguousMemory(x);
+
   }
 
 
-/*
-  if (ExceptionRecord->ExceptionCode == STATUS_BREAKPOINT) {
-	  if (ContextRecord->Eax == BREAKPOINT_PRINT) {
-      leds(0xFF);
-      char x[100];
-      char* p = x;
-		  struct {
-			  uint16_t  length;
-			  uint16_t  maximumLength;
-			  uint32_t  bufferAddress;
-		  }* tmp = ContextRecord->Ecx;
-		  p = copyString(p,he->stringPrint); p = symbol(p,'\'');
-      int l = tmp->length;
-      if (l > 70) { l = 70; }
-		  if (tmp->bufferAddress) { p = copyLimitedString(p,tmp->bufferAddress,l); }
-		  p = symbol(p,'\''); p = symbol(p,'\n');
-      appendFile(he->crash,x);
-	  }
-  }
-*/
 
 
 //he->RtlLeaveCriticalSection(&he->critSect);
 
-  //NOTE: This block is also what the xbox kernel would do without debugger!
-  if (ExceptionRecord->ExceptionCode == STATUS_BREAKPOINT) {
-    if (ExceptionRecord->NumberParameters > 0) {
-      if ((ExceptionRecord->ExceptionInformation[0] == BREAKPOINT_LOAD_SYMBOLS)||(ExceptionRecord->ExceptionInformation[0] == BREAKPOINT_UNLOAD_SYMBOLS) ||
-      (ExceptionRecord->ExceptionInformation[0] == BREAKPOINT_LOAD_XESECTION)||(ExceptionRecord->ExceptionInformation[0] == BREAKPOINT_UNLOAD_XESECTION) ||
-      (ExceptionRecord->ExceptionInformation[0] == BREAKPOINT_PRINT) ||
-      (ExceptionRecord->ExceptionInformation[0] == BREAKPOINT_KDPRINT)) {
-      	leds(0xF0);
-
-        ContextRecord->Eip++;
-        return TRUE;
-      }
-    }
+  
+  // Attempt to print crash info
+  handleDebugPrint(ExceptionRecord,ContextRecord);
+  // Check if this is some debug information from Microsoft tools/code
+  if (handleDebug(ExceptionRecord,ContextRecord)) {
+    return TRUE;
   }
 
+
+  // Now check if this is a (hooked) kernel call
   if (ExceptionRecord->ExceptionCode == 0x80000003) {
     if (ContextRecord) {
-      uint8_t* code =  ContextRecord->Eip;
+      uint8_t* code =  (uint8_t*)ContextRecord->Eip;
       if (*code == 0xCC) {
 
-        if ((code >= (he->code)) && (code < ((he->code)+500*8))) {
-          char x[500];
+        if ((code >= (he->code)) && (code < ((he->code)+500*8))) { // In our fake stub area?
+          char x[1000];
           char* p;
           p = timestamp(x);
           uint32_t offset = (uintptr_t)ContextRecord->Eip - (uintptr_t)(he->code);
-          offset /= 8;
+          offset /= 8; // Each kernel stub is 8 bytes. Calculate ordinal
           offset += 1; // Add the ordinalBase..
-          offset |= 0xC0DE0000;
+          offset |= 0xC0DE0000; // Make grep'ing the logs easier
           if ((((uintptr_t)ContextRecord->Eip - (uintptr_t)(he->code)) % 8) < 4) {
 
             p = symbol(p,'C'); p = symbol(p,':'); p = symbol(p,' ');
-            p = hexString(p,&offset,-4);
+            p = hexString(p,(uint8_t*)&offset,-4);
             p = symbol(p,'\n');
 
-            p = stackDump(p,ContextRecord->Esp,10);
+            p = stackTrace(p,ContextRecord,10,5);
             p = symbol(p,'\n');
 
             // Could rewrite stack here to ContextRecord->Eip + 5 (?)
             // Then we would get a int3 on return
-            // The return address would have to be stored elsewhere and restored below
+            // The return address would have to be stored elsewhere (per thread) and restored below
 
           } else {
 
             p = symbol(p,'R'); p = symbol(p,':'); p = symbol(p,' ');
-            p = hexString(p,&offset,-4);
+            p = hexString(p,(uint8_t*)&offset,-4);
             p = symbol(p,'\n');
 
           } 
@@ -603,34 +657,69 @@ installIoDebugger();
     }
   }
   leds(0xA6);
-
+ 
+  // Give the game a chance to handle this
   if (SecondChance == FALSE) {
     return FALSE;
   }
 
+  //NOTE: You can handle cases here the game didn't want to handle itself
+  //      but was informed about before => "Fixing games code"
+
+  // If we reached this point we were not able to handle this :(
   return FALSE;
 //  while(1);
+}
+
+// Untested.. (Installed in main.c - original function discarded)
+VOID hookKeBugCheckEx(IN ULONG BugCheckCode,IN ULONG_PTR BugCheckParameter1,IN ULONG_PTR BugCheckParameter2,IN ULONG_PTR BugCheckParameter3,IN ULONG_PTR BugCheckParameter4) {
+  // Attempt to push our last debug stuff
+  leds(0xFF);
+  if (KeGetCurrentIrql != PASSIVE_LEVEL) {
+    he->KfLowerIrql(PASSIVE_LEVEL);
+  }
+  char x[100];
+  char* p = x; *p = '\0';
+  p = symbol(p,'\n');
+  p = symbol(p,'!');
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  //FIXME: Wait for the write to complete?!
+  // No point in returning :(
+  int t = 0; 
+  //FIXME: Wait instead and then turn the LED on once, maybe we are still running something in another thread?!
+  while(t++ < 1000) { leds(0xFF); } // Not sure where HalHaltSystem is - so this will have to do :P
+  // End this disaster by providing us with a clean kernel
+  //FIXME: Does not work.. WHY?!
+  __asm__ __volatile__("movw $0x0CF9,%%dx\n" // Reset register
+                       "movb $0x0E,%%al\n" //  "Reset everything" option
+                       "outb %%al,%%dx\n"
+                       "resetLoop:\n"
+                       "cli\n"
+                       "hlt\n"
+                       "jmp resetLoop":);
 }
 
 NTSTATUS NTAPI hookExQueryNonVolatileSetting(IN  DWORD               ValueIndex,	OUT DWORD              *Type,	OUT PUCHAR              Value,	IN  SIZE_T              ValueLength,	OUT PSIZE_T             ResultLength OPTIONAL) {
 
   //FIXME: Find another way to unload it all
-  if ((Value == 0x13371337) && (Type == 0x13371337)) {
+  if ((Value == (PUCHAR)0x13371337) && (Type == (DWORD*)0x13371337)) {
 	  hook(NULL);
 	  return 0x13371337;
   }
 
   // This function usually gets called first, so until I have some other "Startup" hook this will have to do..
   installIoDebugger();
+  installBreakpoints();
 
 	char x[600];
 	char* p = timestamp(x);	
   p = &p[he->RtlSprintf(p,he->stringExQueryNonVolatileSettingArguments,ValueIndex,Type,Value,ValueLength,ResultLength)];
 	NTSTATUS ret = he->ExQueryNonVolatileSetting(ValueIndex,Type,Value,ValueLength,ResultLength);
-	p = hexString(p,&ret,-4); p = symbol(p,',');
+	p = hexString(p,(uint8_t*)&ret,-4); p = symbol(p,',');
 	appendFile(he->crash,x);
   p = x; *p = '\0';
-	p = symbol(p,'D'); p = symbol(p,':'); p = hexString(p,Value,ResultLength?*ResultLength:ValueLength);
+	p = symbol(p,'D'); p = symbol(p,':'); p = hexString(p,(uint8_t*)Value,ResultLength?*ResultLength:ValueLength);
 	p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
@@ -666,7 +755,7 @@ ULONG NTAPI hookAvSetDisplayMode(IN PVOID	RegisterBase,IN ULONG	Step,IN ULONG	Mo
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringAvSetDisplayModeArguments,RegisterBase,Step,Mode,Format,Pitch,FrameBuffer)];
   ULONG ret = he->AvSetDisplayMode(RegisterBase,Step,Mode,Format,Pitch,FrameBuffer);
-	p = hexString(p,&ret,-4);	p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
 }
@@ -676,17 +765,64 @@ NTSTATUS NTAPI hookNtSetIoCompletion(IN HANDLE IoCompletionHandle,IN PVOID KeyCo
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringNtSetIoCompletionArguments,IoCompletionHandle,KeyContext,ApcContext,IoStatus,IoStatusInformation)];
   NTSTATUS ret = he->NtSetIoCompletion(IoCompletionHandle,KeyContext,ApcContext,IoStatus,IoStatusInformation);
-	p = hexString(p,&ret,-4);	p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
 }
 
+#define EEPROM_SMBUS_WRITE 0xA8
+#define EEPROM_SMBUS_READ 0xA9
+
+
+
+//NOTE: This function has to be replace the kernel function internally so we don't use 2 seperate eeproms
+//FIXME: ^ ^ ^ ^ ^
 ULONG NTAPI hookHalReadSMBusValue(UCHAR   Address,UCHAR   Command,BOOLEAN WordFlag,PCHAR   Value) {
+
+  // Emulate the EEPROM
+  {
+
+    if (Address == EEPROM_SMBUS_READ) {
+      if (WordFlag == FALSE) {
+        Value[0] = he->chihiroXboxEeprom[Command+0];
+      } else {
+        //FIXME: Correct order?
+        Value[0] = he->chihiroXboxEeprom[Command+0];
+        Value[1] = he->chihiroXboxEeprom[Command+1];
+      }
+	    char x[200];
+	    char* p = timestamp(x);
+//      STRING(t1,"Emulated eeprom read!\\n");
+	    p = symbol(p,'X');	    p = symbol(p,'X');	    p = symbol(p,'X');
+	    appendFile(he->crash,x);
+
+      return 0;
+    }
+
+    if (Address == EEPROM_SMBUS_WRITE) {
+      if (WordFlag == FALSE) {
+        he->chihiroXboxEeprom[Command+0] = Value[0];
+      } else {
+        //FIXME: Correct order?
+        he->chihiroXboxEeprom[Command+0] = Value[0];
+        he->chihiroXboxEeprom[Command+1] = Value[1];
+      }
+	    char x[200];
+	    char* p = timestamp(x);
+//      STRING(t2,"Emulated eeprom write!\\n");
+	    p = symbol(p,'X');	    p = symbol(p,'Y');	    p = symbol(p,'X');
+	    appendFile(he->crash,x);
+
+      return 0;
+    }
+
+  }
+
 	char x[200];
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringHalReadSMBusValueArguments,Address,Command,WordFlag,Value)];
   ULONG ret = he->HalReadSMBusValue(Address,Command,WordFlag,Value);
-	p = hexString(p,&ret,-4);	p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
 	appendFile(he->crash,x);
   return ret;
 }
@@ -695,7 +831,7 @@ ULONG NTAPI hookHalWriteSMBusValue(UCHAR Address, UCHAR Command, BOOLEAN WordFla
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringHalWriteSMBusValueArguments,Address,Command,WordFlag,Value)];
   ULONG ret = he->HalWriteSMBusValue(Address,Command,WordFlag,Value);
-	p = hexString(p,&ret,-4);	p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
 	appendFile(he->crash,x);
   return ret;
 }
@@ -777,7 +913,7 @@ NTSTATUS NTAPI hookNtCreateFile(OUT PHANDLE             FileHandle, IN  ACCESS_M
   ANSI_STRING* n = ObjectAttributes->ObjectName;
   p = &p[he->RtlSprintf(p,he->stringNtCreateFileArguments,FileHandle, DesiredAccess, ObjectAttributes, n->Length, n->Buffer, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions)];
 	NTSTATUS ret = he->NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions);
-	p = hexString(p,&ret,-4);	p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
 }
@@ -788,7 +924,7 @@ NTSTATUS NTAPI hookNtOpenFile(OUT PHANDLE             FileHandle,IN  ACCESS_MASK
   ANSI_STRING* n = ObjectAttributes->ObjectName;
   p = &p[he->RtlSprintf(p,he->stringNtOpenFileArguments,FileHandle, DesiredAccess, ObjectAttributes, n->Length, n->Buffer,IoStatusBlock, ShareAccess, OpenOptions)];
   NTSTATUS ret = he->NtOpenFile(FileHandle,DesiredAccess,ObjectAttributes,IoStatusBlock, ShareAccess, OpenOptions);
-	p = hexString(p,&ret,-4);	p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
 }
@@ -797,6 +933,7 @@ BOOLEAN NTAPI hookRtlTryEnterCriticalSection(IN PRTL_CRITICAL_SECTION CriticalSe
   char x[200];
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringRtlTryEnterCriticalSectionArguments,CriticalSection)];
+	appendFile(he->crash,x); p = x; *p = '\0';
   BOOLEAN ret = he->RtlTryEnterCriticalSection(CriticalSection);
 	p = symbol(p,(ret==TRUE)?'1':'0');
 	p = symbol(p,'\n');
@@ -829,7 +966,7 @@ VOID NTAPI hookRtlLeaveCriticalSection(IN PRTL_CRITICAL_SECTION CriticalSection)
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKfRaiseIrqlArguments,NewIrql)];
   KIRQL ret = he->KfRaiseIrql(NewIrql);
-	p = hexString(p,&ret,-sizeof(ret)); p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
 }
@@ -849,7 +986,7 @@ NTHALAPI KIRQL hookKeRaiseIrqlToDpcLevel(void) {
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKeRaiseIrqlToDpcLevelArguments)];
   KIRQL ret = he->KeRaiseIrqlToDpcLevel();
-	p = hexString(p,&ret,-sizeof(ret)); p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
 }
@@ -859,27 +996,41 @@ NTSTATUS NTAPI hookKeDelayExecutionThread(IN KPROCESSOR_MODE  WaitMode,IN BOOLEA
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKeDelayExecutionThreadArguments,WaitMode,Alertable,Interval)];
   NTSTATUS ret = he->KeDelayExecutionThread(WaitMode,Alertable,Interval);
-	p = hexString(p,&ret,-4); p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4); p = symbol(p,'\n');
 	appendFile(he->crash,x);
   return ret;
 }
 
 HookEnvironment_t* hook(void* base) {
 
+  // This is the image of the chihiro xbox eeprom we will start the system with (may be modified later in environment)
+  //NOTE: From MAME. Should be 0x100 bytes, but only 112 bytes included?!
+  uint8_t chihiroXboxEeprom[0x100] = {
+    0x94,0x18,0x10,0x59,0x83,0x58,0x15,0xDA,0xDF,0xCC,0x1D,0x78,0x20,0x8A,0x61,0xB8,
+    0x08,0xB4,0xD6,0xA8,0x9E,0x77,0x9C,0xEB,0xEA,0xF8,0x93,0x6E,0x3E,0xD6,0x9C,0x49,
+    0x6B,0xB5,0x6E,0xAB,0x6D,0xBC,0xB8,0x80,0x68,0x9D,0xAA,0xCD,0x0B,0x83,0x17,0xEC,
+    0x2E,0xCE,0x35,0xA8,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x61,0x62,0x63,
+    0xAA,0xBB,0xCC,0xDD,0xEE,0xFF,0x00,0x00,0x4F,0x6E,0x6C,0x69,0x6E,0x65,0x6B,0x65,
+    0x79,0x69,0x6E,0x76,0x61,0x6C,0x69,0x64,0x00,0x03,0x80,0x00,0x00,0x00,0x00,0x00,
+    0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+  };
+
+  // Code..
+
   HookEnvironment_t* environment;
 
 	uintptr_t kernel = 0x80010000;
 	uintptr_t kernelHeader = kernel + *(uint32_t*)(kernel+0x3C);	
 	uintptr_t exportDirectoryTable = kernel + *(uint32_t*)(kernelHeader+0x78); //FIXME: This is pretty dirty?! going accross table borders etc - ignoring size?!
-	uint32_t* exportAddressTableRva = kernel + *(uint32_t*)(exportDirectoryTable+0x1C);
+	uint32_t* exportAddressTableRva = (uint32_t*)(kernel + *(uint32_t*)(exportDirectoryTable+0x1C));
 	uint32_t ordinalBase = *(uint32_t*)(exportDirectoryTable+0x10);
 	exportAddressTableRva = &exportAddressTableRva[-ordinalBase]; // Base offet
 
 	// Initiate an unload first
 	if (base!=NULL) {
     NTSTATUS NTAPI(*reloadedExQueryNonVolatileSetting)(IN  DWORD               ValueIndex,	OUT DWORD              *Type,	OUT PUCHAR              Value,	IN  SIZE_T              ValueLength,	OUT PSIZE_T             ResultLength OPTIONAL);
-    reloadedExQueryNonVolatileSetting = kernel + exportAddressTableRva[24];
-		reloadedExQueryNonVolatileSetting(0,0x13371337,0x13371337,0,NULL);
+    reloadedExQueryNonVolatileSetting = (void*)(kernel + exportAddressTableRva[24]);
+		reloadedExQueryNonVolatileSetting(0,(DWORD*)0x13371337,(PUCHAR)0x13371337,0,NULL);
     //FIXME: If this returned 0x13371337 we know that we just unloaded our hook!
 
     // Fill the new environment
@@ -890,8 +1041,8 @@ HookEnvironment_t* hook(void* base) {
     environment = (void*)((uintptr_t)base + hookFunctionSize);
 
     // Kernel variables
-    environment->XeImageFileName = &XeImageFileName;
-    environment->KeTickCount = &KeTickCount;
+    environment->XeImageFileName = (ANSI_STRING*)&XeImageFileName;
+    environment->KeTickCount = (DWORD*)&KeTickCount;
 	  // Functions
     environment->RtlInitAnsiString = RtlInitAnsiString;
     environment->NtWriteFile = NtWriteFile;
@@ -900,9 +1051,9 @@ HookEnvironment_t* hook(void* base) {
 	  environment->NtSetInformationFile = NtSetInformationFile;
 	  environment->MmAllocateContiguousMemory = MmAllocateContiguousMemory;
 	  environment->MmFreeContiguousMemory = MmFreeContiguousMemory;
-    environment->KeGetCurrentThread = KeGetCurrentThread;
+    environment->KeGetCurrentThread = (void*)KeGetCurrentThread;
     // (Imported by ordinal because OpenXDK sucks)
-    #define IMPORT(o,x) {	environment->x = kernel+exportAddressTableRva[o]; }
+    #define IMPORT(o,x) {	environment->x = (void*)(kernel+exportAddressTableRva[o]); }
     IMPORT(362,RtlSprintf);
     IMPORT(103,KeGetCurrentIrql);
     IMPORT(119,KeInsertQueueDpc);
@@ -913,8 +1064,8 @@ HookEnvironment_t* hook(void* base) {
 	  // 	 To avoid this I use hook(NULL) to turn it back to normal.
 	  // 	 However, this will restore the export table - but this launcher still uses
 	  // 	 the old (hooked) export table, so we have to "reimport" manually
-    IMPORT(0xDB,NtReadFile)
-    IMPORT(0x121,RtlInitAnsiString)
+//FIXME:    IMPORT(0xDB,NtReadFile)
+//FIXME:    IMPORT(0x121,RtlInitAnsiString)
     IMPORT(0x63,KeDelayExecutionThread)
     IMPORT(50,HalWriteSMBusValue)
     IMPORT(45,HalReadSMBusValue)
@@ -940,6 +1091,7 @@ HookEnvironment_t* hook(void* base) {
     IMPORT(24,ExQueryNonVolatileSetting)
     IMPORT(0xA1,KfLowerIrql)
 	  // Data
+    memcpy(environment->chihiroXboxEeprom,chihiroXboxEeprom,0x100);
     strcpy(environment->stringXbe,"XBE: ");
     strcpy(environment->stringEip,"EIP: 0x");
     strcpy(environment->stringEax,"EAX: 0x");
@@ -986,7 +1138,7 @@ HookEnvironment_t* hook(void* base) {
 #include "hookall.inc"
 
   // And hook the functions
-  #define EXPORT(o,x) { exportAddressTableRva[o] = ((base==NULL)?he->x:((uintptr_t)base+(uintptr_t)hook##x-(uintptr_t)hookBase))-kernel; }
+  #define EXPORT(o,x) { exportAddressTableRva[o] = ((base==NULL)?(uintptr_t)he->x:((uintptr_t)base+(uintptr_t)hook##x-(uintptr_t)hookBase))-kernel; }
 /*
 0xA6
 0x127
@@ -995,9 +1147,9 @@ HookEnvironment_t* hook(void* base) {
 0x123
 0x9F
 */
-  EXPORT(0xDB,NtReadFile)
-  EXPORT(0x121,RtlInitAnsiString)
-  EXPORT(0x63,KeDelayExecutionThread)
+//FIXME:  EXPORT(0xDB,NtReadFile)
+//FIXME:  EXPORT(0x121,RtlInitAnsiString)
+//  EXPORT(0x63,KeDelayExecutionThread) // Temporarily disabled because I want to see a full stack trace
   EXPORT(50,HalWriteSMBusValue)
   EXPORT(45,HalReadSMBusValue)
   EXPORT(46,HalReadWritePCISpace)
@@ -1035,7 +1187,7 @@ void installHook(void* base) {
 	uintptr_t kernel = 0x80010000;
 	uintptr_t kernelHeader = kernel + *(uint32_t*)(kernel+0x3C);	
 	uintptr_t exportDirectoryTable = kernel + *(uint32_t*)(kernelHeader+0x78); //FIXME: This is pretty dirty?! going accross table borders etc - ignoring size?!
-	uint32_t* exportAddressTableRva = kernel + *(uint32_t*)(exportDirectoryTable+0x1C);
+	uint32_t* exportAddressTableRva = (uint32_t*)(kernel + *(uint32_t*)(exportDirectoryTable+0x1C));
 	uint32_t ordinalBase = *(uint32_t*)(exportDirectoryTable+0x10);
 	exportAddressTableRva = &exportAddressTableRva[-ordinalBase]; // Base offet
 
