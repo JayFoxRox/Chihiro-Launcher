@@ -16,6 +16,15 @@
 
 //NOTE: these seem to work (most of the time): __builtin_return_address(0),__builtin_return_address(1),__builtin_return_address(2),...
 
+typedef void* PDRIVER_OBJECT;
+typedef void* POBJECT_STRING;
+typedef void* PDEVICE_OBJECT;
+typedef void* PRKEVENT;
+typedef void* PKSYSTEM_ROUTINE;
+typedef void* PIO_APC_ROUTINE;
+typedef uint32_t KWAIT_REASON; // (Enum normally!)
+typedef uint32_t DEVICE_TYPE; // (Don't know what type originally)
+
 typedef struct {
 
 	// Imports
@@ -49,16 +58,25 @@ typedef struct {
   VOID NTAPI(*KeInitializeDpc)(KDPC                *Dpc,PKDEFERRED_ROUTINE   DeferredRoutine,PVOID                DeferredContext);
   KIRQL NTAPI(*KeGetCurrentIrql)(VOID);
   NTSTATUS NTAPI(*NtOpenFile)(OUT PHANDLE             FileHandle,IN  ACCESS_MASK         DesiredAccess,IN  POBJECT_ATTRIBUTES  ObjectAttributes,OUT PIO_STATUS_BLOCK    IoStatusBlock,IN  ULONG               ShareAccess,IN  ULONG               OpenOptions);
-#define NTKERNELAPI NTAPI
-  NTKERNELAPI BOOLEAN(*KeInsertQueueDpc)(IN /*PRKDPC*/PKDPC Dpc,IN PVOID SystemArgument1,IN PVOID SystemArgument2);
+  BOOLEAN NTAPI(*KeInsertQueueDpc)(IN /*PRKDPC*/PKDPC Dpc,IN PVOID SystemArgument1,IN PVOID SystemArgument2);
   DWORD* KeTickCount;
-#define NTHALAPI NTKERNELAPI
+#define NTHALAPI NTAPI
 #define FASTCALL __attribute__((fastcall))
   /*NTHALAPI*/ KIRQL (*FASTCALL KfRaiseIrql)(IN KIRQL NewIrql);
   /*NTHALAPI*/ VOID (*FASTCALL KfLowerIrql)(IN KIRQL NewIrql);
   NTSTATUS NTAPI(*NtSetIoCompletion)(IN HANDLE IoCompletionHandle,IN PVOID KeyContext,IN PVOID ApcContext,IN NTSTATUS IoStatus,IN ULONG_PTR IoStatusInformation);
   NTHALAPI KIRQL(*KeRaiseIrqlToDpcLevel)(void);
+  NTHALAPI KIRQL(*KeRaiseIrqlToSynchLevel)(void);
   NTSTATUS NTAPI(*KeDelayExecutionThread)(IN KPROCESSOR_MODE  WaitMode,IN BOOLEAN          Alertable,IN PLARGE_INTEGER   Interval);
+  NTSTATUS NTAPI(*KeWaitForSingleObject)(IN PVOID Object,IN KWAIT_REASON WaitReason,IN KPROCESSOR_MODE WaitMode,IN BOOLEAN Alertable,IN PLARGE_INTEGER Timeout OPTIONAL);
+  NTSTATUS NTAPI (*IoCreateDevice)(IN PDRIVER_OBJECT DriverObject,IN ULONG DeviceExtensionSize,IN POBJECT_STRING DeviceName OPTIONAL,IN DEVICE_TYPE DeviceType,IN BOOLEAN Exclusive,OUT PDEVICE_OBJECT *DeviceObject);
+  VOID NTAPI (*KeInitializeEvent)(IN PRKEVENT Event,IN EVENT_TYPE Type,IN BOOLEAN State);
+  PVOID NTAPI(*MmAllocateContiguousMemoryEx)(IN SIZE_T NumberOfBytes,IN ULONG_PTR LowestAcceptableAddress,IN ULONG_PTR HighestAcceptableAddress,IN ULONG_PTR Alignment,IN ULONG Protect);
+  VOID NTAPI (*RtlInitializeCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
+  NTSTATUS NTAPI(*PsCreateSystemThreadEx)(OUT PHANDLE ThreadHandle,IN SIZE_T ThreadExtensionSize,IN SIZE_T KernelStackSize,IN SIZE_T TlsDataSize,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN CreateSuspended,IN BOOLEAN DebuggerThread,IN PKSYSTEM_ROUTINE SystemRoutine OPTIONAL);
+  NTSTATUS NTAPI (*PsCreateSystemThread)(OUT PHANDLE ThreadHandle,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN DebuggerThread);
+  NTSTATUS NTAPI(*NtReadFile)(IN HANDLE FileHandle,IN HANDLE Event OPTIONAL,IN PIO_APC_ROUTINE ApcRoutine OPTIONAL,IN PVOID ApcContext OPTIONAL,OUT PIO_STATUS_BLOCK IoStatusBlock,OUT PVOID Buffer,IN ULONG Length,IN PLARGE_INTEGER ByteOffset OPTIONAL);
+
 	// Data
   struct {
     Tss_t tss;
@@ -87,6 +105,7 @@ typedef struct {
     char stringOut[10];
     char stringKeDelayExecutionThreadArguments[100];
     char stringKeRaiseIrqlToDpcLevelArguments[100];
+    char stringKeRaiseIrqlToSynchLevelArguments[100];
     char stringKfLowerIrqlArguments[100];
     char stringKfRaiseIrqlArguments[100];
     char stringRtlLeaveCriticalSectionArguments[100];
@@ -509,6 +528,7 @@ bool handleIO(IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord) {
 }
 
 // This is not supposed to handle anything, so for the moment I figured I should always return false
+//FIXME: Currently crashes on access to tmp. I believe the filter is not correct and also hits on my custom breakpoints!
 bool handleDebugPrint(IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord) {
   if (ExceptionRecord->ExceptionCode == STATUS_BREAKPOINT) {
     if (ExceptionRecord->NumberParameters > 0) {
@@ -574,29 +594,29 @@ NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME
   {
 
     char* x = he->MmAllocateContiguousMemory(0x4000);
-    char* p = x; *p = '\0';
+    if (x != NULL) { //TODO: FIXME: else error leds?
+  //    char x[0xf00];
+      char* p = x; *p = '\0';
 
-    p = exceptionDump(p,ExceptionRecord);
-    appendFile(he->crash,x); p = x; *p = '\0';
+      p = exceptionDump(p,ExceptionRecord);
+      appendFile(he->crash,x); p = x; *p = '\0';
 
-    p = contextDump(p,ContextRecord);
-    appendFile(he->crash,x); p = x; *p = '\0';
+      p = contextDump(p,ContextRecord);
+      appendFile(he->crash,x); p = x; *p = '\0';
 
-    p = symbol(p,'\n');
-    p = stackTrace(p,ContextRecord,10,10);
-    p = symbol(p,'\n');
+      p = symbol(p,'\n');
+      p = stackTrace(p,ContextRecord,10,10);
+      p = symbol(p,'\n');
+      appendFile(he->crash,x); p = x; *p = '\0';
 
-    appendFile(he->crash,x); p = x; *p = '\0';
+      for(int i = 0; i < 10; i++) {
+        p = symbol(p,'-');	
+      }
+      p = symbol(p,'\n');
+      appendFile(he->crash,x);
 
-    for(int i = 0; i < 10; i++) {
-      p = symbol(p,'-');	
+      he->MmFreeContiguousMemory(x);
     }
-    p = symbol(p,'\n');
-
-    appendFile(he->crash,x);
-
-    he->MmFreeContiguousMemory(x);
-
   }
 
 
@@ -606,7 +626,7 @@ NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME
 
   
   // Attempt to print crash info
-  handleDebugPrint(ExceptionRecord,ContextRecord);
+//  handleDebugPrint(ExceptionRecord,ContextRecord); //FIXME: This still crashes!
   // Check if this is some debug information from Microsoft tools/code
   if (handleDebug(ExceptionRecord,ContextRecord)) {
     return TRUE;
@@ -619,7 +639,10 @@ NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME
       uint8_t* code =  (uint8_t*)ContextRecord->Eip;
       if (*code == 0xCC) {
 
-        if ((code >= (he->code)) && (code < ((he->code)+500*8))) { // In our fake stub area?
+        if ((code >= (he->code)) && (code < ((he->code)+500*8))) {
+
+          // In our fake stub area
+
           char x[1000];
           char* p;
           p = timestamp(x);
@@ -648,6 +671,11 @@ NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME
 
           } 
           appendFile(he->crash,x);
+
+        } else {
+
+          // int3 in unhandled memory region
+
         }
 
         ContextRecord->Eip++;
@@ -684,10 +712,19 @@ VOID hookKeBugCheckEx(IN ULONG BugCheckCode,IN ULONG_PTR BugCheckParameter1,IN U
   p = symbol(p,'!');
   p = symbol(p,'\n');
   appendFile(he->crash,x);
+
+  // Fake the original message
+  STRING(msg,"*** KeBugCheckEx STOP: 0x%%08X (0x%%X,0x%%X,0x%%X,0x%%X) - hook at 0x%%08X%%c"); // MS calls this "Fatal System Error" on Xbox but MSDN says its a "STOP"
+  he->RtlSprintf(x,msg,BugCheckCode,BugCheckParameter1,BugCheckParameter2,BugCheckParameter3,BugCheckParameter4,hookBase(),'\n');
+  appendFile(he->crash,x);
+
+  // Also create a log entry by hitting a custom breakpoint
+  asm("int3");
+
   //FIXME: Wait for the write to complete?!
   int t = 0; 
   //FIXME: Wait instead and then turn the LED on once, maybe we are still running something in another thread?!
-  while(t++ < 1000) { leds(0xFF); } // Not sure where HalHaltSystem is - so this will have to do :P
+  while(t++ < 100000) { leds(0xFF); } // Not sure where HalHaltSystem is - so this will have to do :P
   // End this disaster by providing us with a clean kernel
   //FIXME: Does not work.. WHY?!
   __asm__ __volatile__("movw $0x0CF9,%%dx\n" // Reset register
@@ -913,7 +950,8 @@ NTSTATUS NTAPI hookNtCreateFile(OUT PHANDLE             FileHandle, IN  ACCESS_M
   ANSI_STRING* n = ObjectAttributes->ObjectName;
   p = &p[he->RtlSprintf(p,he->stringNtCreateFileArguments,FileHandle, DesiredAccess, ObjectAttributes, n->Length, n->Buffer, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions)];
 	NTSTATUS ret = he->NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions);
-	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,',');
+	p = hexString(p,(uint8_t*)FileHandle,-4);	p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
 }
@@ -924,7 +962,8 @@ NTSTATUS NTAPI hookNtOpenFile(OUT PHANDLE             FileHandle,IN  ACCESS_MASK
   ANSI_STRING* n = ObjectAttributes->ObjectName;
   p = &p[he->RtlSprintf(p,he->stringNtOpenFileArguments,FileHandle, DesiredAccess, ObjectAttributes, n->Length, n->Buffer,IoStatusBlock, ShareAccess, OpenOptions)];
   NTSTATUS ret = he->NtOpenFile(FileHandle,DesiredAccess,ObjectAttributes,IoStatusBlock, ShareAccess, OpenOptions);
-	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
+	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,',');
+	p = hexString(p,(uint8_t*)FileHandle,-4);	p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
 }
@@ -965,6 +1004,7 @@ VOID NTAPI hookRtlLeaveCriticalSection(IN PRTL_CRITICAL_SECTION CriticalSection)
   char x[200];
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKfRaiseIrqlArguments,NewIrql)];
+	appendFile(he->crash,x); p = x; *p = '\0';
   KIRQL ret = he->KfRaiseIrql(NewIrql);
 	p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
 	appendFile(he->crash,x);
@@ -985,7 +1025,19 @@ NTHALAPI KIRQL hookKeRaiseIrqlToDpcLevel(void) {
   char x[200];
 	char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKeRaiseIrqlToDpcLevelArguments)];
+	appendFile(he->crash,x); p = x; *p = '\0';
   KIRQL ret = he->KeRaiseIrqlToDpcLevel();
+	p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
+	appendFile(he->crash,x);
+	return ret;
+}
+
+NTHALAPI KIRQL hookKeRaiseIrqlToSynchLevel(void) {
+  char x[200];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,he->stringKeRaiseIrqlToSynchLevelArguments)];
+	appendFile(he->crash,x); p = x; *p = '\0';
+  KIRQL ret = he->KeRaiseIrqlToSynchLevel();
 	p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
 	appendFile(he->crash,x);
 	return ret;
@@ -1000,6 +1052,108 @@ NTSTATUS NTAPI hookKeDelayExecutionThread(IN KPROCESSOR_MODE  WaitMode,IN BOOLEA
 	appendFile(he->crash,x);
   return ret;
 }
+
+NTSTATUS NTAPI hookNtClose(IN HANDLE Handle) {
+  STRING(pre,"NtClose(0x%%08X) = ")
+  STRING(post,"0x%%08X\\n")
+  char x[200];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,Handle)];
+  NTSTATUS ret = he->NtClose(Handle);
+  p = &p[he->RtlSprintf(p,post,ret)];
+	appendFile(he->crash,x);
+  return ret;
+}
+
+NTSTATUS NTAPI hookKeWaitForSingleObject(IN PVOID Object,IN KWAIT_REASON WaitReason,IN KPROCESSOR_MODE WaitMode,IN BOOLEAN Alertable,IN PLARGE_INTEGER Timeout OPTIONAL){
+  STRING(pre,"KeWaitForSingleObject(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
+  STRING(post,"0x%%08X\\n")
+  char x[200];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,Object,WaitReason,WaitMode,Alertable,Timeout)];
+  NTSTATUS ret = he->KeWaitForSingleObject(Object,WaitReason,WaitMode,Alertable,Timeout);
+  p = &p[he->RtlSprintf(p,post,ret)];
+	appendFile(he->crash,x);
+  return ret;
+}
+NTSTATUS NTAPI  hookIoCreateDevice(IN PDRIVER_OBJECT DriverObject,IN ULONG DeviceExtensionSize,IN POBJECT_STRING DeviceName OPTIONAL,IN DEVICE_TYPE DeviceType,IN BOOLEAN Exclusive,OUT PDEVICE_OBJECT *DeviceObject){
+  STRING(pre,"IoCreateDevice(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
+  STRING(post,"0x%%08X\\n")
+  char x[200];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,DriverObject,DeviceExtensionSize,DeviceName,DeviceType,Exclusive,DeviceObject)];
+  NTSTATUS ret = he->IoCreateDevice(DriverObject,DeviceExtensionSize,DeviceName,DeviceType,Exclusive,DeviceObject);
+  p = &p[he->RtlSprintf(p,post,ret)];
+	appendFile(he->crash,x);
+  return ret;
+}
+VOID NTAPI  hookKeInitializeEvent(IN PRKEVENT Event,IN EVENT_TYPE Type,IN BOOLEAN State){
+  STRING(pre,"KeInitializeEvent(0x%%08X,0x%%08X,0x%%08X) = ")
+  STRING(post,"0x%%08X\\n")
+  char x[200];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,Event,Type,State)];
+  he->KeInitializeEvent(Event,Type,State);
+  p = &p[he->RtlSprintf(p,post)];
+	appendFile(he->crash,x);
+  return;
+}
+PVOID NTAPI hookMmAllocateContiguousMemoryEx(IN SIZE_T NumberOfBytes,IN ULONG_PTR LowestAcceptableAddress,IN ULONG_PTR HighestAcceptableAddress,IN ULONG_PTR Alignment,IN ULONG Protect){
+  STRING(pre,"MmAllocateContiguousMemoryEx(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
+  STRING(post,"0x%%08X\\n")
+  char x[200];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,NumberOfBytes,LowestAcceptableAddress,HighestAcceptableAddress,Alignment,Protect)];
+  PVOID ret = he->MmAllocateContiguousMemoryEx(NumberOfBytes,LowestAcceptableAddress,HighestAcceptableAddress,Alignment,Protect);
+  p = &p[he->RtlSprintf(p,post,ret)];
+	appendFile(he->crash,x);
+  return ret;
+}
+VOID NTAPI  hookRtlInitializeCriticalSection(IN PRTL_CRITICAL_SECTION CriticalSection){
+  STRING(pre,"RtlInitializeCriticalSection(0x%%08X) = ")
+  STRING(post,"\\n")
+  char x[200];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,CriticalSection)];
+  he->RtlInitializeCriticalSection(CriticalSection);
+  p = &p[he->RtlSprintf(p,post)];
+	appendFile(he->crash,x);
+  return;
+}
+NTSTATUS NTAPI hookPsCreateSystemThreadEx(OUT PHANDLE ThreadHandle,IN SIZE_T ThreadExtensionSize,IN SIZE_T KernelStackSize,IN SIZE_T TlsDataSize,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN CreateSuspended,IN BOOLEAN DebuggerThread,IN PKSYSTEM_ROUTINE SystemRoutine OPTIONAL){
+  STRING(pre,"PsCreateSystemThreadEx(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
+  STRING(post,"0x%%08X\\n")
+  char x[400];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,ThreadHandle,ThreadExtensionSize,KernelStackSize,TlsDataSize,ThreadId,StartRoutine,StartContext,CreateSuspended,DebuggerThread,SystemRoutine)];
+  NTSTATUS ret = he->PsCreateSystemThreadEx(ThreadHandle,ThreadExtensionSize,KernelStackSize,TlsDataSize,ThreadId,StartRoutine,StartContext,CreateSuspended,DebuggerThread,SystemRoutine);
+  p = &p[he->RtlSprintf(p,post,ret)];
+	appendFile(he->crash,x);
+  return ret;
+}
+NTSTATUS NTAPI  hookPsCreateSystemThread(OUT PHANDLE ThreadHandle,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN DebuggerThread){
+  STRING(pre,"PsCreateSystemThread(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
+  STRING(post,"0x%%08X\\n")
+  char x[400];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,ThreadHandle,ThreadId,StartRoutine,StartContext,DebuggerThread)];
+  NTSTATUS ret = he->PsCreateSystemThread(ThreadHandle,ThreadId,StartRoutine,StartContext,DebuggerThread);
+  p = &p[he->RtlSprintf(p,post,ret)];
+	appendFile(he->crash,x);
+  return ret;
+}
+NTSTATUS NTAPI hookNtReadFile(IN HANDLE FileHandle,IN HANDLE Event OPTIONAL,IN PIO_APC_ROUTINE ApcRoutine OPTIONAL,IN PVOID ApcContext OPTIONAL,OUT PIO_STATUS_BLOCK IoStatusBlock,OUT PVOID Buffer,IN ULONG Length,IN PLARGE_INTEGER ByteOffset OPTIONAL){
+  STRING(pre,"NtReadFile(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
+  STRING(post,"0x%%08X\\n")
+  char x[400];
+	char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,FileHandle,Event,ApcRoutine,ApcContext,IoStatusBlock,Buffer,Length,ByteOffset)];
+  NTSTATUS ret = he->NtReadFile(FileHandle,Event,ApcRoutine,ApcContext,IoStatusBlock,Buffer,Length,ByteOffset);
+  p = &p[he->RtlSprintf(p,post,ret)];
+	appendFile(he->crash,x);
+  return ret;
+}
+
 
 HookEnvironment_t* hook(void* base) {
 
@@ -1044,13 +1198,10 @@ HookEnvironment_t* hook(void* base) {
     environment->XeImageFileName = (ANSI_STRING*)&XeImageFileName;
     environment->KeTickCount = (DWORD*)&KeTickCount;
 	  // Functions
-    environment->RtlInitAnsiString = RtlInitAnsiString;
     environment->NtWriteFile = NtWriteFile;
-    environment->NtClose = NtClose;
 	  environment->NtQueryInformationFile = NtQueryInformationFile;
 	  environment->NtSetInformationFile = NtSetInformationFile;
 	  environment->MmAllocateContiguousMemory = MmAllocateContiguousMemory;
-	  environment->MmFreeContiguousMemory = MmFreeContiguousMemory;
     environment->KeGetCurrentThread = (void*)KeGetCurrentThread;
     // (Imported by ordinal because OpenXDK sucks)
     #define IMPORT(o,x) {	environment->x = (void*)(kernel+exportAddressTableRva[o]); }
@@ -1064,8 +1215,18 @@ HookEnvironment_t* hook(void* base) {
 	  // 	 To avoid this I use hook(NULL) to turn it back to normal.
 	  // 	 However, this will restore the export table - but this launcher still uses
 	  // 	 the old (hooked) export table, so we have to "reimport" manually
-//FIXME:    IMPORT(0xDB,NtReadFile)
-//FIXME:    IMPORT(0x121,RtlInitAnsiString)
+    IMPORT(0x9F,KeWaitForSingleObject)
+    IMPORT(0x41,IoCreateDevice)
+    IMPORT(0x6C,KeInitializeEvent)
+    IMPORT(0xA6,MmAllocateContiguousMemoryEx)
+    IMPORT(0xAB,MmFreeContiguousMemory)
+//    IMPORT(0x127,RtlLeaveCriticalSectionAndRegion)
+    IMPORT(0x123,RtlInitializeCriticalSection)
+    IMPORT(0xFF,PsCreateSystemThreadEx)
+    IMPORT(0xFE,PsCreateSystemThread)
+    IMPORT(0xBB,NtClose)
+    IMPORT(0xDB,NtReadFile)
+    IMPORT(0x121,RtlInitAnsiString)
     IMPORT(0x63,KeDelayExecutionThread)
     IMPORT(50,HalWriteSMBusValue)
     IMPORT(45,HalReadSMBusValue)
@@ -1088,6 +1249,7 @@ HookEnvironment_t* hook(void* base) {
     IMPORT(306,RtlTryEnterCriticalSection)
     IMPORT(0xA0,KfRaiseIrql)
     IMPORT(0x81,KeRaiseIrqlToDpcLevel)
+    IMPORT(0x82,KeRaiseIrqlToSynchLevel)
     IMPORT(24,ExQueryNonVolatileSetting)
     IMPORT(0xA1,KfLowerIrql)
 	  // Data
@@ -1128,6 +1290,7 @@ HookEnvironment_t* hook(void* base) {
     strcpy(environment->stringRtlEnterCriticalSectionArguments,"RtlEnterCriticalSection(0x%08X)");
     strcpy(environment->stringRtlLeaveCriticalSectionArguments,"RtlLeaveCriticalSection(0x%08X)");
     strcpy(environment->stringKeRaiseIrqlToDpcLevelArguments,"KeRaiseIrqlToDpcLevel() = 0x");
+    strcpy(environment->stringKeRaiseIrqlToSynchLevelArguments,"KeRaiseIrqlToSynchLevel() = 0x");
     strcpy(environment->stringKfLowerIrqlArguments,"KfLowerIrql(0x%X)");
     strcpy(environment->stringKfRaiseIrqlArguments,"KfRaiseIrql(0x%X) = 0x");
     strcpy(environment->stringKeDelayExecutionThreadArguments,"KeDelayExecutionThread(0x%08X,0x%08X,0x%08X) = 0x");
@@ -1135,21 +1298,24 @@ HookEnvironment_t* hook(void* base) {
     environment = NULL; //TODO: Possibly return previous environment?
   }
 
-#include "hookall.inc"
+//#include "hookall.inc" //FIXME: Disabled because.. "Sometimes(?) crashes Crazy Taxi [Not sure about log, just stops halfway through], always crashes VCOP3 [doublefault?]"
 
   // And hook the functions
   #define EXPORT(o,x) { exportAddressTableRva[o] = ((base==NULL)?(uintptr_t)he->x:((uintptr_t)base+(uintptr_t)hook##x-(uintptr_t)hookBase))-kernel; }
-/*
-0xA6
-0x127
-0x41
-0x6C
-0x123
-0x9F
-*/
-//FIXME:  EXPORT(0xDB,NtReadFile)
-//FIXME:  EXPORT(0x121,RtlInitAnsiString)
-//  EXPORT(0x63,KeDelayExecutionThread) // Temporarily disabled because I want to see a full stack trace
+
+  EXPORT(0x9F,KeWaitForSingleObject)
+  EXPORT(0x41,IoCreateDevice)
+  EXPORT(0x6C,KeInitializeEvent)
+  EXPORT(0xA6,MmAllocateContiguousMemoryEx)
+//  EXPORT(0xAB,MmFreeContiguousMemory)
+//  EXPORT(0x127,RtlLeaveCriticalSectionAndRegion)
+  EXPORT(0x123,RtlInitializeCriticalSection)
+  EXPORT(0xFF,PsCreateSystemThreadEx)
+  EXPORT(0xFE,PsCreateSystemThread)
+  EXPORT(0xBB,NtClose)
+  EXPORT(0xDB,NtReadFile)
+//  EXPORT(0x121,RtlInitAnsiString)
+  EXPORT(0x63,KeDelayExecutionThread) // Temporarily disabled because I want to see a full stack trace
   EXPORT(50,HalWriteSMBusValue)
   EXPORT(45,HalReadSMBusValue)
   EXPORT(46,HalReadWritePCISpace)

@@ -25,7 +25,8 @@
     - Breakpoints to see where things go bad
     - Buffer output on my own and only write to disk on PASSIVE_LEVEL
     - Somehow hook or HLE the in / out instructions < done for up to 4 addresses at a time
-      - Emulate Baseboard, possibly using dolphin as code base
+      - Emulate Baseboard, possibly using dolphin as code base < TODO
+    - Hook the SMBus functions and create a virtual eeprom < hooked but not deep enough in system yet
 
   TODO (In no particular order, but research should always be first):
   
@@ -57,7 +58,6 @@
         - AV_OPTION_QUERY_MODE
         - AV_QUERY_ENCODER_TYPE
         - AV_QUERY_MODE_TABLE_VERSION
-    - Hook the SMBus functions and create a virtual eeprom
     - Move or at least check PFN address
     - Move or at least check instance pages
 

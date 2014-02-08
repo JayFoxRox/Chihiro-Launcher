@@ -1,8 +1,8 @@
 #define STRING(var,text) \
 const char* var; \
-__asm__ __volatile__("call next" #var "\n" \
-                     "dat" #var ": .asciz \"" text "\"\n" \
-                     "next" #var ":\n" \
+__asm__ __volatile__("call 1f\n" \
+                     ".asciz \"" text "\"\n" \
+                     "1:\n" \
                      "pop %%eax" \
                      :"=a"(var));
 

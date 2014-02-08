@@ -7,41 +7,41 @@
 
     // Detect and avoid constants / variables
 
-  #define CONSTANT(s,o) { if ((o) == ordinal) { continue; }}
-    CONSTANT(ExEventObjectType,16)
-    CONSTANT(ExMutantObjectType,22)
-    CONSTANT(ExSemaphoreObjectType,30)
-    CONSTANT(ExTimerObjectType,31)
-    CONSTANT(HalBootSMCVideoMode,356)
-    CONSTANT(HalDiskCachePartitionCount,40)
-    CONSTANT(HalDiskModelNumber,41)
-    CONSTANT(HalDiskSerialNumber,42)
-    CONSTANT(IdexChannelObject,357)
-    CONSTANT(IoCompletionObjectType,64)
-    CONSTANT(IoDeviceObjectType,70)
-    CONSTANT(IoFileObjectType,71)
-    CONSTANT(KdDebuggerEnabled,88)
-    CONSTANT(KdDebuggerNotPresent,89)
-    CONSTANT(KeInterruptTime,120)
-    CONSTANT(KeSystemTime,154)
-    CONSTANT(KeTickCount,156)
-    CONSTANT(KeTimeIncrement,157)
-    CONSTANT(KiBugCheckData,162)
-    CONSTANT(LaunchDataPage,164)
-    CONSTANT(MmGlobalData,102)
-    CONSTANT(ObDirectoryObjectType,240)
-    CONSTANT(ObpObjectHandleTable,245)
-    CONSTANT(ObSymbolicLinkObjectType,249)
-    CONSTANT(PsThreadObjectType,259)
-    CONSTANT(XboxAlternateSignatureKeys,354)
-    CONSTANT(XboxEEPROMKey,321)
-    CONSTANT(XboxHardwareInfo,322)
-    CONSTANT(XboxHDKey,323)
-    CONSTANT(XboxLANKey,353)
-    CONSTANT(XboxKrnlVersion,324)
-    CONSTANT(XboxSignatureKey,325)
-    CONSTANT(XeImageFileName,326)
-    CONSTANT(XePublicKeyData,355)
+    #define CONSTANT(s,o) { if ((o) == ordinal) { continue; } }
+      CONSTANT(ExEventObjectType,16)
+      CONSTANT(ExMutantObjectType,22)
+      CONSTANT(ExSemaphoreObjectType,30)
+      CONSTANT(ExTimerObjectType,31)
+      CONSTANT(HalBootSMCVideoMode,356)
+      CONSTANT(HalDiskCachePartitionCount,40)
+      CONSTANT(HalDiskModelNumber,41)
+      CONSTANT(HalDiskSerialNumber,42)
+      CONSTANT(IdexChannelObject,357)
+      CONSTANT(IoCompletionObjectType,64)
+      CONSTANT(IoDeviceObjectType,70)
+      CONSTANT(IoFileObjectType,71)
+      CONSTANT(KdDebuggerEnabled,88)
+      CONSTANT(KdDebuggerNotPresent,89)
+      CONSTANT(KeInterruptTime,120)
+      CONSTANT(KeSystemTime,154)
+      CONSTANT(KeTickCount,156)
+      CONSTANT(KeTimeIncrement,157)
+      CONSTANT(KiBugCheckData,162)
+      CONSTANT(LaunchDataPage,164)
+      CONSTANT(MmGlobalData,102)
+      CONSTANT(ObDirectoryObjectType,240)
+      CONSTANT(ObpObjectHandleTable,245)
+      CONSTANT(ObSymbolicLinkObjectType,249)
+      CONSTANT(PsThreadObjectType,259)
+      CONSTANT(XboxAlternateSignatureKeys,354)
+      CONSTANT(XboxEEPROMKey,321)
+      CONSTANT(XboxHardwareInfo,322)
+      CONSTANT(XboxHDKey,323)
+      CONSTANT(XboxLANKey,353)
+      CONSTANT(XboxKrnlVersion,324)
+      CONSTANT(XboxSignatureKey,325)
+      CONSTANT(XeImageFileName,326)
+      CONSTANT(XePublicKeyData,355)
 
     // So this is a function
 
@@ -58,11 +58,12 @@
       encodeRet(&code[7]);
       *p = (uintptr_t)code - kernel;
     } else {
+      // If this was hooked before..
       if ((code[0] == 0xCC) && (code[1] == 0xE9)) { // For call this has to be 0xE8
-        uint32_t address = (uintptr_t)&code[1];
-        uint32_t target = *(uint32_t*)&code[2];
-        uint32_t original = target+address+5;
-        *p = original - kernel;
+        uint32_t address = (uintptr_t)&code[1]; // Get address of the jmp instruction
+        uint32_t target = *(uint32_t*)&code[2]; // Read address of the original function
+        uint32_t original = target+address+5; // Calculate address of the original function
+        *p = original - kernel; // Write the original address back to export table
       }
     }
 
