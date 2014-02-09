@@ -21,7 +21,7 @@ struc			KERNEL_INFO
 endstruc
 */
 
-const int KI_expansion_size = 0x8000;
+const int KI_expansion_size = 0xA000;
 
 /*
 	dd %1, patcher_%1, %2, %3, (USEDSPACE_EXPD_%1 + 0xFFF) & ~0xFFF, %4, \

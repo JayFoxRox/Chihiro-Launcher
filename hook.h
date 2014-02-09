@@ -1,3 +1,5 @@
+//#define VIDEO_HOOK
+
 // This file will be copied to the kernel space mostly.
 // Moved code has some implications:
 // - No stdlib or API
@@ -13,11 +15,108 @@
 // unused sections / data (Both, strip and don't copy headers).
 // The relocator should be copied from Cxbe. It has proven to work..
 
-
 //NOTE: these seem to work (most of the time): __builtin_return_address(0),__builtin_return_address(1),__builtin_return_address(2),...
 
+
+// This is the image of the chihiro xbox eeprom we will start the system with (may be modified later in environment)
+//NOTE: From MAME. Should be 0x100 bytes, but only 112 bytes included?!
+uint8_t chihiroXboxEeprom[0x100] = {
+  0x94,0x18,0x10,0x59,0x83,0x58,0x15,0xDA,0xDF,0xCC,0x1D,0x78,0x20,0x8A,0x61,0xB8,
+  0x08,0xB4,0xD6,0xA8,0x9E,0x77,0x9C,0xEB,0xEA,0xF8,0x93,0x6E,0x3E,0xD6,0x9C,0x49,
+  0x6B,0xB5,0x6E,0xAB,0x6D,0xBC,0xB8,0x80,0x68,0x9D,0xAA,0xCD,0x0B,0x83,0x17,0xEC,
+  0x2E,0xCE,0x35,0xA8,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x61,0x62,0x63,
+  0xAA,0xBB,0xCC,0xDD,0xEE,0xFF,0x00,0x00,0x4F,0x6E,0x6C,0x69,0x6E,0x65,0x6B,0x65,
+  0x79,0x69,0x6E,0x76,0x61,0x6C,0x69,0x64,0x00,0x03,0x80,0x00,0x00,0x00,0x00,0x00,
+  0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+};
+
+// Defines for video regions
+#define VIDEO_REGION_NTSCM			0x00000100
+#define VIDEO_REGION_NTSCJ			0x00000200
+#define VIDEO_REGION_PAL			0x00000300
+
+// Defines for pixel formats
+#define VIDEO_BPP_16				0x00000011
+#define VIDEO_BPP_32				0x00000012
+
+// Defines for video adapter packs
+#define VIDEO_ADAPTER_COMPOSITE			0x00000000
+#define VIDEO_ADAPTER_RCA			0x00000001
+#define VIDEO_ADAPTER_SVIDEO			0x00000002
+#define VIDEO_ADAPTER_RGBSCART		0x00000003
+#define VIDEO_ADAPTER_HDTV	         	0x00000004
+#define VIDEO_ADAPTER_VGA_SOG         		0x00000005
+
+// Defines for video encoder options
+#define VIDEO_ENC_GET_SETTINGS		6
+#define VIDEO_ENC_VIDEOENABLE		9
+#define VIDEO_ENC_FLICKERFILTER		11
+#define VIDEO_ENC_SOFTEN_FILTER		14
+
+typedef struct _VIDEO_MODE_SETTING {
+  DWORD dwMode;
+  int width;
+  int height;
+  int refresh;
+  DWORD dwStandard;
+  DWORD dwFlags;
+} VIDEO_MODE_SETTING;
+
+VIDEO_MODE_SETTING pVidModes[] = {
+  {0x44030307,640,480,50,VIDEO_REGION_PAL,VIDEO_ADAPTER_COMPOSITE}, //640x480 PAL 50Hz
+  {0x44040408,720,480,50,VIDEO_REGION_PAL,VIDEO_ADAPTER_COMPOSITE}, //720x480 PAL 50Hz
+  {0x0401010B,640,480,60,VIDEO_REGION_PAL,VIDEO_ADAPTER_COMPOSITE}, //640x480 PAL 60Hz
+  {0x0402020C,720,480,60,VIDEO_REGION_PAL,VIDEO_ADAPTER_COMPOSITE}, //720x480 PAL 60Hz
+  {0x04010101,640,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_COMPOSITE}, //640x480 NTSCM 60Hz
+  {0x04020202,720,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_COMPOSITE}, //720x480 NTSCM 60Hz
+  {0x04010103,640,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_COMPOSITE}, //640x480 NTSCJ 60Hz
+  {0x04020204,720,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_COMPOSITE}, //720x480 NTSCJ 60Hz
+
+  {0x44030307,640,480,50,VIDEO_REGION_PAL,VIDEO_ADAPTER_RCA}, //640x480 PAL 50Hz
+  {0x44040408,720,480,50,VIDEO_REGION_PAL,VIDEO_ADAPTER_RCA}, //720x480 PAL 50Hz
+  {0x0401010B,640,480,60,VIDEO_REGION_PAL,VIDEO_ADAPTER_RCA}, //640x480 PAL 60Hz
+  {0x0402020C,720,480,60,VIDEO_REGION_PAL,VIDEO_ADAPTER_RCA}, //720x480 PAL 60Hz
+  {0x04010101,640,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_RCA}, //640x480 NTSCM 60Hz
+  {0x04020202,720,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_RCA}, //720x480 NTSCM 60Hz
+  {0x04010103,640,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_RCA}, //640x480 NTSCJ 60Hz
+  {0x04020204,720,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_RCA}, //720x480 NTSCJ 60Hz
+
+  {0x44030307,640,480,50,VIDEO_REGION_PAL,VIDEO_ADAPTER_SVIDEO}, //640x480 PAL 50Hz
+  {0x44040408,720,480,50,VIDEO_REGION_PAL,VIDEO_ADAPTER_SVIDEO}, //720x480 PAL 50Hz
+  {0x0401010B,640,480,60,VIDEO_REGION_PAL,VIDEO_ADAPTER_SVIDEO}, //640x480 PAL 60Hz
+  {0x0402020C,720,480,60,VIDEO_REGION_PAL,VIDEO_ADAPTER_SVIDEO}, //720x480 PAL 60Hz
+  {0x04010101,640,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_SVIDEO}, //640x480 NTSCM 60Hz
+  {0x04020202,720,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_SVIDEO}, //720x480 NTSCM 60Hz
+  {0x04010103,640,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_SVIDEO}, //640x480 NTSCJ 60Hz
+  {0x04020204,720,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_SVIDEO}, //720x480 NTSCJ 60Hz
+
+  {0x60030307,640,480,50,VIDEO_REGION_PAL,VIDEO_ADAPTER_RGBSCART}, //640x480 PAL 50Hz RGB
+  {0x60040408,720,480,50,VIDEO_REGION_PAL,VIDEO_ADAPTER_RGBSCART}, //720x480 PAL 50Hz RGB
+  {0x2001010B,640,480,60,VIDEO_REGION_PAL,VIDEO_ADAPTER_RGBSCART}, //640x480 PAL 60Hz RGB
+  {0x2002020C,720,480,60,VIDEO_REGION_PAL,VIDEO_ADAPTER_RGBSCART}, //720x480 PAL 60Hz RGB
+  {0x20010101,640,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_RGBSCART}, //640x480 NTSCM 60Hz RGB
+  {0x20020202,720,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_RGBSCART}, //720x480 NTSCM 60Hz RGB
+  {0x20010103,640,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_RGBSCART}, //640x480 NTSCJ 60Hz RGB
+  {0x20020204,720,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_RGBSCART}, //720x480 NTSCJ 60Hz RGB
+
+  {0x88070701,640,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_HDTV}, //640x480p NTSCM 60Hz
+  {0x88080801,720,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_HDTV}, //720x480p NTSCM 60Hz
+  {0x880B0A02,1280,720,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_HDTV}, //1280x720p NTSCM 60Hz
+  {0x880E0C03,1920,1080,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_HDTV}, //1920x1080i NTSCM 60Hz
+  {0x88070701,640,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_HDTV}, //640x480p NTSCJ 60Hz
+  {0x88080801,720,480,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_HDTV}, //720x480p NTSCJ 60Hz
+  {0x880B0A02,1280,720,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_HDTV}, //1280x720p NTSCJ 60Hz
+  {0x880E0C03,1920,1080,60,VIDEO_REGION_NTSCJ,VIDEO_ADAPTER_HDTV}, //1920x1080i NTSCJ 60Hz
+
+  {0xC0060601,640,480,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_VGA_SOG}, //640x480 SVGA 60Hz
+  {0xC0030303,800,600,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_VGA_SOG}, //800x600 SVGA 60Hz
+  {0xC0040404,1024,768,60,VIDEO_REGION_NTSCM,VIDEO_ADAPTER_VGA_SOG}, //1024x768 SVGA 60Hz
+};
+
+
 typedef void* PDRIVER_OBJECT;
-typedef void* POBJECT_STRING;
+typedef STRING OBJECT_STRING;
+typedef OBJECT_STRING* POBJECT_STRING;
 typedef void* PDEVICE_OBJECT;
 typedef void* PRKEVENT;
 typedef void* PKSYSTEM_ROUTINE;
@@ -27,37 +126,37 @@ typedef uint32_t DEVICE_TYPE; // (Don't know what type originally)
 
 typedef struct {
 
-	// Imports
+  // Imports
   ANSI_STRING* XeImageFileName;
   PKTHREAD NTAPI(*KeGetCurrentThread)();
   ULONG NTAPI(*HalWriteSMBusValue)(UCHAR Address, UCHAR Command, BOOLEAN WordFlag, ULONG Value);
-  VOID NTAPI(*RtlInitAnsiString)(IN OUT PANSI_STRING DestinationString,IN     PCSZ         SourceString);
-  NTSTATUS NTAPI(*NtCreateFile)(OUT PHANDLE  FileHandle, IN  ACCESS_MASK  DesiredAccess,IN  POBJECT_ATTRIBUTES  ObjectAttributes,OUT PIO_STATUS_BLOCK  IoStatusBlock,IN  PLARGE_INTEGER  AllocationSize OPTIONAL, IN  ULONG  FileAttributes, IN  ULONG  ShareAccess, IN  ULONG  CreateDisposition, IN  ULONG  CreateOptions );
-  NTSTATUS NTAPI(*NtWriteFile)(IN  HANDLE  FileHandle, IN  PVOID  Event,IN  PVOID  ApcRoutine,IN  PVOID  ApcContext,OUT  PVOID  IoStatusBlock,IN  PVOID  Buffer,IN  ULONG  Length,IN  PLARGE_INTEGER  ByteOffset);
+  VOID NTAPI(*RtlInitAnsiString)(IN OUT PANSI_STRING DestinationString,IN PCSZ SourceString);
+  NTSTATUS NTAPI(*NtCreateFile)(OUT PHANDLE FileHandle, IN ACCESS_MASK DesiredAccess,IN POBJECT_ATTRIBUTES ObjectAttributes,OUT PIO_STATUS_BLOCK IoStatusBlock,IN PLARGE_INTEGER AllocationSize OPTIONAL, IN ULONG FileAttributes, IN ULONG ShareAccess, IN ULONG CreateDisposition, IN ULONG CreateOptions );
+  NTSTATUS NTAPI(*NtWriteFile)(IN HANDLE FileHandle, IN PVOID Event,IN PVOID ApcRoutine,IN PVOID ApcContext,OUT PVOID IoStatusBlock,IN PVOID Buffer,IN ULONG Length,IN PLARGE_INTEGER ByteOffset);
   NTSTATUS NTAPI(*NtClose)(IN HANDLE Handle);
-	NTSTATUS NTAPI(*NtQueryInformationFile)(   IN  HANDLE                      FileHandle,OUT PIO_STATUS_BLOCK            IoStatusBlock,OUT PVOID                       FileInformation, IN  ULONG                       Length, IN  FILE_INFORMATION_CLASS      FileInfo);
-	NTSTATUS NTAPI(*NtSetInformationFile)(IN  HANDLE  FileHandle,OUT	PVOID	IoStatusBlock,IN	PVOID	FileInformation,IN	ULONG	Length,IN	ULONG	FileInformationClass);
-	VOID NTAPI(*RtlEnterCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
-	BOOLEAN NTAPI(*RtlTryEnterCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
-	VOID NTAPI(*RtlLeaveCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
-	PVOID NTAPI(*MmAllocateContiguousMemory)(IN ULONG NumberOfBytes);
-	VOID NTAPI(*MmFreeContiguousMemory)(IN PVOID BaseAddress);
-	NTSTATUS NTAPI(*ExQueryNonVolatileSetting)(IN  DWORD               ValueIndex,	OUT DWORD              *Type,	OUT PUCHAR              Value,	IN  SIZE_T              ValueLength,	OUT PSIZE_T             ResultLength OPTIONAL);
+  NTSTATUS NTAPI(*NtQueryInformationFile)(IN HANDLE FileHandle,OUT PIO_STATUS_BLOCK IoStatusBlock,OUT PVOID FileInformation, IN ULONG Length, IN FILE_INFORMATION_CLASS FileInfo);
+  NTSTATUS NTAPI(*NtSetInformationFile)(IN HANDLE FileHandle,OUT PVOID IoStatusBlock,IN PVOID FileInformation,IN ULONG Length,IN ULONG FileInformationClass);
+  VOID NTAPI(*RtlEnterCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
+  BOOLEAN NTAPI(*RtlTryEnterCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
+  VOID NTAPI(*RtlLeaveCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
+  PVOID NTAPI(*MmAllocateContiguousMemory)(IN ULONG NumberOfBytes);
+  VOID NTAPI(*MmFreeContiguousMemory)(IN PVOID BaseAddress);
+  NTSTATUS NTAPI(*ExQueryNonVolatileSetting)(IN DWORD ValueIndex, OUT DWORD *Type, OUT PUCHAR Value, IN SIZE_T ValueLength, OUT PSIZE_T ResultLength OPTIONAL);
   int(*RtlSprintf)(char *buffer, const char *format, ...);
-  VOID NTAPI(*AvSendTVEncoderOption)(IN	PVOID	RegisterBase, IN	ULONG	Option, IN	ULONG	Param, OUT	ULONG	*Result);
-  ULONG NTAPI(*AvSetDisplayMode)(IN PVOID	RegisterBase,IN ULONG	Step,IN ULONG	Mode,IN ULONG	Format,IN ULONG	Pitch,IN ULONG	FrameBuffer);
-  ULONG NTAPI(*HalReadSMBusValue)(UCHAR   Address,UCHAR   Command,BOOLEAN WordFlag,PCHAR   Value);
-  VOID NTAPI(*HalReadWritePCISpace)(IN ULONG   BusNumber,IN ULONG   SlotNumber,IN ULONG   RegisterNumber,IN PVOID   Buffer,IN ULONG   Length,IN BOOLEAN WritePCISpace);
+  VOID NTAPI(*AvSendTVEncoderOption)(IN PVOID RegisterBase, IN ULONG Option, IN ULONG Param, OUT ULONG *Result);
+  ULONG NTAPI(*AvSetDisplayMode)(IN PVOID RegisterBase,IN ULONG Step,IN ULONG Mode,IN ULONG Format,IN ULONG Pitch,IN ULONG FrameBuffer);
+  ULONG NTAPI(*HalReadSMBusValue)(UCHAR Address,UCHAR Command,BOOLEAN WordFlag,PCHAR Value);
+  VOID NTAPI(*HalReadWritePCISpace)(IN ULONG BusNumber,IN ULONG SlotNumber,IN ULONG RegisterNumber,IN PVOID Buffer,IN ULONG Length,IN BOOLEAN WritePCISpace);
   VOID NTAPI(*HalReturnToFirmware)(RETURN_FIRMWARE Routine);
-  VOID NTAPI(*READ_PORT_BUFFER_UCHAR)(IN PUCHAR Port,IN PUCHAR Buffer,IN ULONG  Count);
-  VOID NTAPI(*READ_PORT_BUFFER_USHORT)(IN PUSHORT Port,IN PUSHORT Buffer,IN ULONG   Count);
-  VOID NTAPI(*READ_PORT_BUFFER_ULONG)(IN PULONG Port,IN PULONG Buffer,IN ULONG  Count);
-  VOID NTAPI(*WRITE_PORT_BUFFER_UCHAR)(IN PUCHAR Port,IN PUCHAR Buffer,IN ULONG  Count);
-  VOID NTAPI(*WRITE_PORT_BUFFER_USHORT)(IN PUSHORT Port,IN PUSHORT Buffer,IN ULONG   Count);
-  VOID NTAPI(*WRITE_PORT_BUFFER_ULONG)(IN PULONG Port,IN PULONG Buffer,IN ULONG  Count);
-  VOID NTAPI(*KeInitializeDpc)(KDPC                *Dpc,PKDEFERRED_ROUTINE   DeferredRoutine,PVOID                DeferredContext);
+  VOID NTAPI(*READ_PORT_BUFFER_UCHAR)(IN PUCHAR Port,IN PUCHAR Buffer,IN ULONG Count);
+  VOID NTAPI(*READ_PORT_BUFFER_USHORT)(IN PUSHORT Port,IN PUSHORT Buffer,IN ULONG Count);
+  VOID NTAPI(*READ_PORT_BUFFER_ULONG)(IN PULONG Port,IN PULONG Buffer,IN ULONG Count);
+  VOID NTAPI(*WRITE_PORT_BUFFER_UCHAR)(IN PUCHAR Port,IN PUCHAR Buffer,IN ULONG Count);
+  VOID NTAPI(*WRITE_PORT_BUFFER_USHORT)(IN PUSHORT Port,IN PUSHORT Buffer,IN ULONG Count);
+  VOID NTAPI(*WRITE_PORT_BUFFER_ULONG)(IN PULONG Port,IN PULONG Buffer,IN ULONG Count);
+  VOID NTAPI(*KeInitializeDpc)(KDPC *Dpc,PKDEFERRED_ROUTINE DeferredRoutine,PVOID DeferredContext);
   KIRQL NTAPI(*KeGetCurrentIrql)(VOID);
-  NTSTATUS NTAPI(*NtOpenFile)(OUT PHANDLE             FileHandle,IN  ACCESS_MASK         DesiredAccess,IN  POBJECT_ATTRIBUTES  ObjectAttributes,OUT PIO_STATUS_BLOCK    IoStatusBlock,IN  ULONG               ShareAccess,IN  ULONG               OpenOptions);
+  NTSTATUS NTAPI(*NtOpenFile)(OUT PHANDLE FileHandle,IN ACCESS_MASK DesiredAccess,IN POBJECT_ATTRIBUTES ObjectAttributes,OUT PIO_STATUS_BLOCK IoStatusBlock,IN ULONG ShareAccess,IN ULONG OpenOptions);
   BOOLEAN NTAPI(*KeInsertQueueDpc)(IN /*PRKDPC*/PKDPC Dpc,IN PVOID SystemArgument1,IN PVOID SystemArgument2);
   DWORD* KeTickCount;
 #define NTHALAPI NTAPI
@@ -67,23 +166,26 @@ typedef struct {
   NTSTATUS NTAPI(*NtSetIoCompletion)(IN HANDLE IoCompletionHandle,IN PVOID KeyContext,IN PVOID ApcContext,IN NTSTATUS IoStatus,IN ULONG_PTR IoStatusInformation);
   NTHALAPI KIRQL(*KeRaiseIrqlToDpcLevel)(void);
   NTHALAPI KIRQL(*KeRaiseIrqlToSynchLevel)(void);
-  NTSTATUS NTAPI(*KeDelayExecutionThread)(IN KPROCESSOR_MODE  WaitMode,IN BOOLEAN          Alertable,IN PLARGE_INTEGER   Interval);
+  NTSTATUS NTAPI(*KeDelayExecutionThread)(IN KPROCESSOR_MODE WaitMode,IN BOOLEAN Alertable,IN PLARGE_INTEGER Interval);
   NTSTATUS NTAPI(*KeWaitForSingleObject)(IN PVOID Object,IN KWAIT_REASON WaitReason,IN KPROCESSOR_MODE WaitMode,IN BOOLEAN Alertable,IN PLARGE_INTEGER Timeout OPTIONAL);
-  NTSTATUS NTAPI (*IoCreateDevice)(IN PDRIVER_OBJECT DriverObject,IN ULONG DeviceExtensionSize,IN POBJECT_STRING DeviceName OPTIONAL,IN DEVICE_TYPE DeviceType,IN BOOLEAN Exclusive,OUT PDEVICE_OBJECT *DeviceObject);
-  VOID NTAPI (*KeInitializeEvent)(IN PRKEVENT Event,IN EVENT_TYPE Type,IN BOOLEAN State);
+  NTSTATUS NTAPI(*IoCreateDevice)(IN PDRIVER_OBJECT DriverObject,IN ULONG DeviceExtensionSize,IN POBJECT_STRING DeviceName OPTIONAL,IN DEVICE_TYPE DeviceType,IN BOOLEAN Exclusive,OUT PDEVICE_OBJECT *DeviceObject);
+  VOID NTAPI(*KeInitializeEvent)(IN PRKEVENT Event,IN EVENT_TYPE Type,IN BOOLEAN State);
   PVOID NTAPI(*MmAllocateContiguousMemoryEx)(IN SIZE_T NumberOfBytes,IN ULONG_PTR LowestAcceptableAddress,IN ULONG_PTR HighestAcceptableAddress,IN ULONG_PTR Alignment,IN ULONG Protect);
-  VOID NTAPI (*RtlInitializeCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
+  VOID NTAPI(*RtlInitializeCriticalSection)(IN PRTL_CRITICAL_SECTION CriticalSection);
   NTSTATUS NTAPI(*PsCreateSystemThreadEx)(OUT PHANDLE ThreadHandle,IN SIZE_T ThreadExtensionSize,IN SIZE_T KernelStackSize,IN SIZE_T TlsDataSize,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN CreateSuspended,IN BOOLEAN DebuggerThread,IN PKSYSTEM_ROUTINE SystemRoutine OPTIONAL);
-  NTSTATUS NTAPI (*PsCreateSystemThread)(OUT PHANDLE ThreadHandle,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN DebuggerThread);
+  NTSTATUS NTAPI(*PsCreateSystemThread)(OUT PHANDLE ThreadHandle,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN DebuggerThread);
   NTSTATUS NTAPI(*NtReadFile)(IN HANDLE FileHandle,IN HANDLE Event OPTIONAL,IN PIO_APC_ROUTINE ApcRoutine OPTIONAL,IN PVOID ApcContext OPTIONAL,OUT PIO_STATUS_BLOCK IoStatusBlock,OUT PVOID Buffer,IN ULONG Length,IN PLARGE_INTEGER ByteOffset OPTIONAL);
 
-	// Data
+  // Data
   struct {
-    Tss_t tss;
+  Tss_t tss;
     uint8_t iomap[0x4100/8];  
   };
   uint8_t chihiroXboxEeprom[0x100];
   char crash[80];
+  char* buffer;
+  int iVidModes; // Should always be 43!
+  VIDEO_MODE_SETTING vidModes[43];
   struct {
     char stringEip[10];
     char stringEax[10];
@@ -126,7 +228,7 @@ typedef struct {
     char stringNtSetIoCompletionArguments[200];
   };
   
-  uint8_t code[8*500]; // A maximum of 500 kernel hooks.. should be enough
+  uint8_t hookallStub[8*500]; // A maximum of 500 kernel hooks.. should be enough
 
 } HookEnvironment_t;
 
@@ -154,46 +256,77 @@ uintptr_t volatile hookBase(void) {
 //NOTE: Don't move this! It must be below hookBase!
 #include "common/string.h"
 
+bool installBuffer(char** buffer) {
+
+  // Check if we already have a buffer
+  if (*buffer != NULL) {
+    // Does the buffer exist already?
+    if (*(uint32_t*)((uintptr_t)(*buffer)-4) == 0xBEEFBABE) {
+      // Exists, so we are done
+      return true;
+    }
+    *buffer = NULL;
+  }
+//return false;
+  // Do we have the necessary permissions to allocate space?!
+  if (he->KeGetCurrentIrql() > APC_LEVEL) { // DISPATCH_LEVEL should also work as MmAllocateContiguousMemoryEx works on that
+    //FIXME: Error message?
+    return false;
+  }
+//return false;
+  // Create a new buffer  
+  void* memory = he->MmAllocateContiguousMemory(0x10000); // Should be enough buffer but still not fuck up games too bad
+  if (memory == NULL) {
+    //FIXME: Error message?
+    return false;
+  }
+//FIXME: Persist?
+  *buffer = (char*)((uintptr_t)memory + 4); // Skip the magic!
+  *(uint32_t*)((uintptr_t)(*buffer)-4) = 0xBEEFBABE; // Place the magic value!
+
+  return true;
+}
+
 void installIoDebugger(void) {
 
-	// Seen: 401E,4020,4022,4024,4026,4080,4084,408E,40F0
-	// 401F  XXXXXXXXXXXXXX
-	// 4025 							  XXXXXXXXX
-	// 4081														XXXXXXXXX
-	// 408F																			XXXX
-	// 40F1																					 XXXX
+  // Seen: 401E,4020,4022,4024,4026,4080,4084,408E,40F0
+  // 401F  XXXXXXXXXXXXXX
+  // 4025                 XXXXXXXXX
+  // 4081                            XXXXXXXXX
+  // 408F                                      XXXX
+  // 40F1                                           XXXX
 
-	asm(
-			//"mov $0x4000,%%eax\nmov %%eax,%%dr0\n"
+  asm(
+      //"mov $0x4000,%%eax\nmov %%eax,%%dr0\n"
       //"mov $0x4002,%%eax\nmov %%eax,%%dr3\n"
       //"mov $0x4006,%%eax\nmov %%eax,%%dr1\n"      
       //"mov $0x401E,%%eax\nmov %%eax,%%dr0\n"
       //"mov $0x4020,%%eax\nmov %%eax,%%dr0\n"
-			//"mov $0x4022,%%eax\nmov %%eax,%%dr1\n"
-			//"mov $0x4024,%%eax\nmov %%eax,%%dr2\n"
-			//"mov $0x4026,%%eax\nmov %%eax,%%dr2\n"	
-      //"mov $0x4080,%%eax\nmov %%eax,%%dr0\n"		
-			//"mov $0x4084,%%eax\nmov %%eax,%%dr2\n"
-			//"mov $0x4088,%%eax\nmov %%eax,%%dr2\n"
-			//"mov $0x408E,%%eax\nmov %%eax,%%dr1\n"
-			//"mov $0x4090,%%eax\nmov %%eax,%%dr1\n"
-			//"mov $0x40F0,%%eax\nmov %%eax,%%dr3\n"
-			//"mov $0x40F4,%%eax\nmov %%eax,%%dr3\n"
+      //"mov $0x4022,%%eax\nmov %%eax,%%dr1\n"
+      //"mov $0x4024,%%eax\nmov %%eax,%%dr2\n"
+      //"mov $0x4026,%%eax\nmov %%eax,%%dr2\n"  
+      //"mov $0x4080,%%eax\nmov %%eax,%%dr0\n"    
+      //"mov $0x4084,%%eax\nmov %%eax,%%dr2\n"
+      //"mov $0x4088,%%eax\nmov %%eax,%%dr2\n"
+      //"mov $0x408E,%%eax\nmov %%eax,%%dr1\n"
+      //"mov $0x4090,%%eax\nmov %%eax,%%dr1\n"
+      //"mov $0x40F0,%%eax\nmov %%eax,%%dr3\n"
+      //"mov $0x40F4,%%eax\nmov %%eax,%%dr3\n"
 
       "mov $0x401E,%%eax\nmov %%eax,%%dr0\n" // Expected to be read at startup
-			"mov $0x4090,%%eax\nmov %%eax,%%dr1\n" // Reset
-			"mov $0x40F0,%%eax\nmov %%eax,%%dr2\n" // Query DIMM Size or revision
+      "mov $0x4090,%%eax\nmov %%eax,%%dr1\n" // Reset
+      "mov $0x40F0,%%eax\nmov %%eax,%%dr2\n" // Query DIMM Size or revision
       "mov $0x40F4,%%eax\nmov %%eax,%%dr3\n" // Same
-			"mov %%dr7,%%eax\n"
-			"andl $0x0000FC00,%%eax\n"
-			"orl $0xEEEE03FF,%%eax\n"
-			"mov %%eax,%%dr7\n"
-			"mov %%cr4,%%eax\n"
-			"orl $0x00000008,%%eax\n"
-			"mov %%eax,%%cr4"
-			:
-			:
-			:"eax");
+      "mov %%dr7,%%eax\n"
+      "andl $0x0000FC00,%%eax\n"
+      "orl $0xEEEE03FF,%%eax\n"
+      "mov %%eax,%%dr7\n"
+      "mov %%cr4,%%eax\n"
+      "orl $0x00000008,%%eax\n"
+      "mov %%eax,%%cr4"
+      :
+      :
+      :"eax");
 
   return;
 
@@ -230,18 +363,18 @@ typedef struct {
 void appendFile(const char* file, const char* text);
 
 VOID __stdcall appendFileDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2) {
-	KIRQL irql = he->KeGetCurrentIrql();
-	
+  KIRQL irql = he->KeGetCurrentIrql();
+  
   AppendFileDpc_t* dpcMemory = DeferredContext;
   if (irql == 0) { // Still not there yet..
-	  appendFile(dpcMemory->file,dpcMemory->text);
-	} else {
-//		leds(0xF4);
-	}
+    appendFile(dpcMemory->file,dpcMemory->text);
+  } else {
+//    leds(0xF4);
+  }
   he->MmFreeContiguousMemory(dpcMemory->text);
   he->MmFreeContiguousMemory(dpcMemory->file);
 
-//	he->MmFreeContiguousMemory(dpcMemory);   //FIXME: Can I free the KDPC object memory here?!
+//  he->MmFreeContiguousMemory(dpcMemory);   //FIXME: Can I free the KDPC object memory here?!
 
   return;
 }
@@ -272,33 +405,33 @@ return;
   }
 #endif
 
-	ANSI_STRING string;
-	IO_STATUS_BLOCK ioStatusBlock;
-	OBJECT_ATTRIBUTES objectAttributes = { 0 };
+  ANSI_STRING string;
+  IO_STATUS_BLOCK ioStatusBlock;
+  OBJECT_ATTRIBUTES objectAttributes = { 0 };
 
-	he->RtlInitAnsiString(&string,file);
-	
-	// Kernel object attributes (ignore case, use system root) 
-	objectAttributes.Attributes = OBJ_CASE_INSENSITIVE;
-	objectAttributes.ObjectName = &string;
-	objectAttributes.RootDirectory = NULL;
+  he->RtlInitAnsiString(&string,file);
+  
+  // Kernel object attributes (ignore case, use system root) 
+  objectAttributes.Attributes = OBJ_CASE_INSENSITIVE;
+  objectAttributes.ObjectName = &string;
+  objectAttributes.RootDirectory = NULL;
 
-	HANDLE fh;
-	NTSTATUS ret = he->NtCreateFile(&fh,GENERIC_WRITE | SYNCHRONIZE,&objectAttributes,&ioStatusBlock,NULL,FILE_ATTRIBUTE_NORMAL,FILE_SHARE_READ | FILE_SHARE_WRITE,FILE_OPEN_IF , FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH);	
+  HANDLE fh;
+  NTSTATUS ret = he->NtCreateFile(&fh,GENERIC_WRITE | SYNCHRONIZE,&objectAttributes,&ioStatusBlock,NULL,FILE_ATTRIBUTE_NORMAL,FILE_SHARE_READ | FILE_SHARE_WRITE,FILE_OPEN_IF , FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH);  
 
 
 // Seek to end of file
-	FILE_NETWORK_OPEN_INFORMATION openInfo;
+  FILE_NETWORK_OPEN_INFORMATION openInfo;
 
-	ret = he->NtQueryInformationFile(fh, &ioStatusBlock,&openInfo, sizeof(openInfo), FileNetworkOpenInformation);
+  ret = he->NtQueryInformationFile(fh, &ioStatusBlock,&openInfo, sizeof(openInfo), FileNetworkOpenInformation);
 
-	FILE_POSITION_INFORMATION positionInfo;
-	LARGE_INTEGER             targetPointer;
+  FILE_POSITION_INFORMATION positionInfo;
+  LARGE_INTEGER             targetPointer;
 
-	positionInfo.CurrentByteOffset.u.HighPart = openInfo.EndOfFile.u.HighPart;
-	positionInfo.CurrentByteOffset.u.LowPart= openInfo.EndOfFile.u.LowPart;
+  positionInfo.CurrentByteOffset.u.HighPart = openInfo.EndOfFile.u.HighPart;
+  positionInfo.CurrentByteOffset.u.LowPart= openInfo.EndOfFile.u.LowPart;
 
-	ret = he->NtSetInformationFile(fh, &ioStatusBlock, &positionInfo, sizeof(positionInfo), FilePositionInformation);
+  ret = he->NtSetInformationFile(fh, &ioStatusBlock, &positionInfo, sizeof(positionInfo), FilePositionInformation);
 
 
 //printf("1: %X\n",ret);
@@ -307,10 +440,10 @@ return;
 
 
 
-	ret = he->NtWriteFile(fh,NULL,NULL,NULL,&ioStatusBlock,(char*)text,len,NULL);
+  ret = he->NtWriteFile(fh,NULL,NULL,NULL,&ioStatusBlock,(char*)text,len,NULL);
 //printf("2: %X\n",ret);
 
-	ret = he->NtClose(fh);
+  ret = he->NtClose(fh);
 //printf("3: %X\n",ret);
 
   LEDS(0x00);
@@ -320,12 +453,32 @@ return;
 }
 
 void appendFile(const char* file, const char* text) {
+
+  // Check if we have a buffer
+  bool hasBuffer = installBuffer(&he->buffer);
+
+  // Append to buffer if we miss the privilege
   KIRQL irql = he->KeGetCurrentIrql();
   if (irql > PASSIVE_LEVEL) {
-    LEDS(0x1E);
+    if (hasBuffer) {
+      copyString(&he->buffer[stringLength(he->buffer)],text);
+    } else {
+      //FIXME: Error led?
+    }
     return;
   }
+
+  // Make sure we flush the remaining buffer
+  if (hasBuffer) {
+    if (stringLength(he->buffer) > 0) {
+      forceAppendFile(file,he->buffer);
+      *he->buffer = '\0';
+    }
+  }
+
+  // Now append the new content too
   forceAppendFile(file,text);
+
   return;
 }
 
@@ -351,11 +504,11 @@ char* stackDump(char* p, void* base, unsigned int depth) {
   uint32_t* stack = base;
   uint8_t index;
   for(index = 1; index <= depth; index++) {
-	  p = symbol(p,'\t');	p = symbol(p,'\t');
-	  p = symbol(p,'['); p = decString(p,(uint8_t*)&index,-1);	p = symbol(p,']');
-	  p = symbol(p,' ');
-	  p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&stack[index-1],-4);
-	  p = symbol(p,'\n');
+    p = symbol(p,'\t');  p = symbol(p,'\t');
+    p = symbol(p,'['); p = decString(p,(uint8_t*)&index,-1);  p = symbol(p,']');
+    p = symbol(p,' ');
+    p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&stack[index-1],-4);
+    p = symbol(p,'\n');
   }
   return p;
 }
@@ -371,11 +524,11 @@ char* stackTrace(char* p, PCONTEXT ContextRecord, unsigned int maximumDepth, uns
   for(level = 1; level <= maximumDepth; level++) {
 
     if ((base < 0xD0000000) || (base >= 0xE0000000)) {
-			p = symbol(p,'\t');	p = symbol(p,'\t');
-			p = symbol(p,'B'); p = symbol(p,'B');	p = symbol(p,'a'); p = symbol(p,'s');	p = symbol(p,'e');
-			p = symbol(p,' ');
-			p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&base,-4);
-			p = symbol(p,'\n');
+      p = symbol(p,'\t');  p = symbol(p,'\t');
+      p = symbol(p,'B'); p = symbol(p,'B');  p = symbol(p,'a'); p = symbol(p,'s');  p = symbol(p,'e');
+      p = symbol(p,' ');
+      p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&base,-4);
+      p = symbol(p,'\n');
       break;
     }
 
@@ -384,30 +537,30 @@ char* stackTrace(char* p, PCONTEXT ContextRecord, unsigned int maximumDepth, uns
     uintptr_t returnTo = stack[1];
     p = stackDump(p,&stack[2],contentDepth);
     if (contentDepth > 0) {
-			p = symbol(p,'\t');	p = symbol(p,'\t');
-			p = symbol(p,'.'); p = symbol(p,'.'); p = symbol(p,'.');
-			p = symbol(p,'\n'); p = symbol(p,'\n');
+      p = symbol(p,'\t');  p = symbol(p,'\t');
+      p = symbol(p,'.'); p = symbol(p,'.'); p = symbol(p,'.');
+      p = symbol(p,'\n'); p = symbol(p,'\n');
     }
-		p = symbol(p,'\t');
-		p = decString(p,&level,-1);	p = symbol(p,'.'); p = symbol(p,' '); 
-		p = symbol(p,'F'); p = symbol(p,'r');	p = symbol(p,'o'); p = symbol(p,'m'); p = symbol(p,':'); p = symbol(p,' ');
-		p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&returnTo,-4);
-		p = symbol(p,'\n');
+    p = symbol(p,'\t');
+    p = decString(p,&level,-1);  p = symbol(p,'.'); p = symbol(p,' '); 
+    p = symbol(p,'F'); p = symbol(p,'r');  p = symbol(p,'o'); p = symbol(p,'m'); p = symbol(p,':'); p = symbol(p,' ');
+    p = symbol(p,'0'); p = symbol(p,'x'); p = hexString(p,(uint8_t*)&returnTo,-4);
+    p = symbol(p,'\n');
 
-    if ((returnTo == 0xDEADC0DE) || (returnTo == 0)) { //FIXME: Should be looking for zero instead, but thread.c is using 0xDEADC0DE atm because it's easier to spot
+    if ((returnTo == 0xDEADC0DE) || (returnTo == 0)) { //FIXME: "Should be looking for zero instead, but thread.c is using 0xDEADC0DE atm because it's easier to spot" < Hackbox comment
       //debugPrintf("(Probably end of thread, stopping)\n");
-			p = symbol(p,'B'); p = symbol(p,'R');	p = symbol(p,'e'); p = symbol(p,'t');	p = symbol(p,'n');
-			p = symbol(p,'\n');
+      p = symbol(p,'B'); p = symbol(p,'R');  p = symbol(p,'e'); p = symbol(p,'t');  p = symbol(p,'n');
+      p = symbol(p,'\n');
       break;
     } 
   }  
   if (level == maximumDepth) {
-		p = symbol(p,'\t');
-		p = symbol(p,'.'); p = symbol(p,'.'); p = symbol(p,'.');
-		p = symbol(p,'\n'); p = symbol(p,'\n');
-	}
-	p = symbol(p,'\n');
-	return p;
+    p = symbol(p,'\t');
+    p = symbol(p,'.'); p = symbol(p,'.'); p = symbol(p,'.');
+    p = symbol(p,'\n'); p = symbol(p,'\n');
+  }
+  p = symbol(p,'\n');
+  return p;
 }
 
 char* timestamp(char* s) {
@@ -438,23 +591,17 @@ char* contextDump(char* p, IN PCONTEXT ContextRecord) {
 
 //FIXME: RtlSprintf and STRING()
 
-  if (he->KeGetCurrentIrql() > DISPATCH_LEVEL) {
-    leds(0xE1);
-  } else {
-
-    p = copyString(p,he->stringEip); p = hexString(p,(uint8_t*)&ContextRecord->SegCs,-2); p = symbol(p,':'); p = hexString(p,(uint8_t*)&ContextRecord->Eip,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEsi); p = hexString(p,(uint8_t*)&ContextRecord->Esi,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEdi); p = hexString(p,(uint8_t*)&ContextRecord->Edi,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEbp); p = hexString(p,(uint8_t*)&ContextRecord->Ebp,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEsp); p = hexString(p,(uint8_t*)&ContextRecord->SegSs,-2); p = symbol(p,':'); p = hexString(p,(uint8_t*)&ContextRecord->Esp,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEax); p = hexString(p,(uint8_t*)&ContextRecord->Eax,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEcx); p = hexString(p,(uint8_t*)&ContextRecord->Ecx,-4); p = symbol(p,'\n');
-    p = copyString(p,he->stringEdx); p = hexString(p,(uint8_t*)&ContextRecord->Edx,-4); p = symbol(p,'\n');
-    p = symbol(p,'\n');
-    p = copyString(p,he->stringCode); p = hexString(p,(uint8_t*)(ContextRecord->Eip-10),10); p = symbol(p,' '); p = hexString(p,(uint8_t*)ContextRecord->Eip,1); p = symbol(p,' '); p = hexString(p,(uint8_t*)(ContextRecord->Eip+1),10); p = symbol(p,'\n');
-    p = copyString(p,he->stringStack); p = hexString(p,(uint8_t*)(ContextRecord->Esp-10),10); p = symbol(p,' '); p = hexString(p,(uint8_t*)ContextRecord->Esp,1); p = symbol(p,' '); p = hexString(p,(uint8_t*)(ContextRecord->Esp+1),10); p = symbol(p,'\n');
-
-  }
+  p = copyString(p,he->stringEip); p = hexString(p,(uint8_t*)&ContextRecord->SegCs,-2); p = symbol(p,':'); p = hexString(p,(uint8_t*)&ContextRecord->Eip,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringEsi); p = hexString(p,(uint8_t*)&ContextRecord->Esi,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringEdi); p = hexString(p,(uint8_t*)&ContextRecord->Edi,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringEbp); p = hexString(p,(uint8_t*)&ContextRecord->Ebp,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringEsp); p = hexString(p,(uint8_t*)&ContextRecord->SegSs,-2); p = symbol(p,':'); p = hexString(p,(uint8_t*)&ContextRecord->Esp,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringEax); p = hexString(p,(uint8_t*)&ContextRecord->Eax,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringEcx); p = hexString(p,(uint8_t*)&ContextRecord->Ecx,-4); p = symbol(p,'\n');
+  p = copyString(p,he->stringEdx); p = hexString(p,(uint8_t*)&ContextRecord->Edx,-4); p = symbol(p,'\n');
+  p = symbol(p,'\n');
+  p = copyString(p,he->stringCode); p = hexString(p,(uint8_t*)(ContextRecord->Eip-10),10); p = symbol(p,' '); p = hexString(p,(uint8_t*)ContextRecord->Eip,1); p = symbol(p,' '); p = hexString(p,(uint8_t*)(ContextRecord->Eip+1),10); p = symbol(p,'\n');
+  p = copyString(p,he->stringStack); p = hexString(p,(uint8_t*)(ContextRecord->Esp-10),10); p = symbol(p,' '); p = hexString(p,(uint8_t*)ContextRecord->Esp,1); p = symbol(p,' '); p = hexString(p,(uint8_t*)(ContextRecord->Esp+1),10); p = symbol(p,'\n');
 
   return p;
 
@@ -518,7 +665,7 @@ bool handleIO(IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord) {
       p = symbol(p,'\n');
       appendFile(he->crash,x);
       return false;
-    }            	
+    }              
     LEDS(0x0E)
     p = symbol(p,'\n');
     appendFile(he->crash,x);
@@ -537,16 +684,16 @@ bool handleDebugPrint(IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextR
         leds(0xFF);
         char x[200];
         char* p = x;
-		    ANSI_STRING* tmp = (void*)ContextRecord->Ecx;
+        ANSI_STRING* tmp = (void*)ContextRecord->Ecx;
 
-		    p = copyString(p,he->stringPrint); p = symbol(p,'\'');
+        p = copyString(p,he->stringPrint); p = symbol(p,'\'');
         int l = tmp->Length;
         if (l > 150) { l = 150; }
-		    if (tmp->Buffer) { p = copyLimitedString(p,(const char*)tmp->Buffer,l); }
-		    p = symbol(p,'\''); p = symbol(p,'\n');
+        if (tmp->Buffer) { p = copyLimitedString(p,(const char*)tmp->Buffer,l); }
+        p = symbol(p,'\''); p = symbol(p,'\n');
         appendFile(he->crash,x);
       }
-	  }
+    }
   }
   return false;
 }
@@ -559,7 +706,7 @@ bool handleDebug(IN PEXCEPTION_RECORD ExceptionRecord, IN PCONTEXT ContextRecord
       (ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_LOAD_XESECTION)||(ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_UNLOAD_XESECTION) ||
       (ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_PRINT) ||
       (ExceptionRecord->ExceptionInformation[0] == (void*)BREAKPOINT_KDPRINT)) {
-      	leds(0xF0);
+        leds(0xF0);
 
         ContextRecord->Eip++;
         return true;
@@ -610,7 +757,7 @@ NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME
       appendFile(he->crash,x); p = x; *p = '\0';
 
       for(int i = 0; i < 10; i++) {
-        p = symbol(p,'-');	
+        p = symbol(p,'-');  
       }
       p = symbol(p,'\n');
       appendFile(he->crash,x);
@@ -639,18 +786,18 @@ NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME
       uint8_t* code =  (uint8_t*)ContextRecord->Eip;
       if (*code == 0xCC) {
 
-        if ((code >= (he->code)) && (code < ((he->code)+500*8))) {
+        if ((code >= (he->hookallStub)) && (code < ((he->hookallStub)+500*8))) {
 
           // In our fake stub area
 
           char x[1000];
           char* p;
           p = timestamp(x);
-          uint32_t offset = (uintptr_t)ContextRecord->Eip - (uintptr_t)(he->code);
+          uint32_t offset = (uintptr_t)ContextRecord->Eip - (uintptr_t)(he->hookallStub);
           offset /= 8; // Each kernel stub is 8 bytes. Calculate ordinal
           offset += 1; // Add the ordinalBase..
           offset |= 0xC0DE0000; // Make grep'ing the logs easier
-          if ((((uintptr_t)ContextRecord->Eip - (uintptr_t)(he->code)) % 8) < 4) {
+          if ((((uintptr_t)ContextRecord->Eip - (uintptr_t)(he->hookallStub)) % 8) < 4) {
 
             p = symbol(p,'C'); p = symbol(p,':'); p = symbol(p,' ');
             p = hexString(p,(uint8_t*)&offset,-4);
@@ -703,9 +850,7 @@ NTAPI BOOLEAN hookKiDebugRoutine(IN PKTRAP_FRAME TrapFrame, IN PKEXCEPTION_FRAME
 VOID hookKeBugCheckEx(IN ULONG BugCheckCode,IN ULONG_PTR BugCheckParameter1,IN ULONG_PTR BugCheckParameter2,IN ULONG_PTR BugCheckParameter3,IN ULONG_PTR BugCheckParameter4) {
   // Attempt to push our last debug stuff
   leds(0xFF);
-  if (he->KeGetCurrentIrql() != PASSIVE_LEVEL) {
-    he->KfLowerIrql(PASSIVE_LEVEL);
-  }
+
   char x[100];
   char* p = x; *p = '\0';
   p = symbol(p,'\n');
@@ -716,6 +861,12 @@ VOID hookKeBugCheckEx(IN ULONG BugCheckCode,IN ULONG_PTR BugCheckParameter1,IN U
   // Fake the original message
   STRING(msg,"*** KeBugCheckEx STOP: 0x%%08X (0x%%X,0x%%X,0x%%X,0x%%X) - hook at 0x%%08X%%c"); // MS calls this "Fatal System Error" on Xbox but MSDN says its a "STOP"
   he->RtlSprintf(x,msg,BugCheckCode,BugCheckParameter1,BugCheckParameter2,BugCheckParameter3,BugCheckParameter4,hookBase(),'\n');
+
+  // Now, with our last chance to append to the log, lower the IRQL
+  if (he->KeGetCurrentIrql() > PASSIVE_LEVEL) {
+    he->KfLowerIrql(PASSIVE_LEVEL);
+  }
+
   appendFile(he->crash,x);
 
   // Also create a log entry by hitting a custom breakpoint
@@ -737,74 +888,208 @@ VOID hookKeBugCheckEx(IN ULONG BugCheckCode,IN ULONG_PTR BugCheckParameter1,IN U
   // No point in returning :(
 }
 
-NTSTATUS NTAPI hookExQueryNonVolatileSetting(IN  DWORD               ValueIndex,	OUT DWORD              *Type,	OUT PUCHAR              Value,	IN  SIZE_T              ValueLength,	OUT PSIZE_T             ResultLength OPTIONAL) {
+NTSTATUS NTAPI hookExQueryNonVolatileSetting(IN  DWORD               ValueIndex,  OUT DWORD              *Type,  OUT PUCHAR              Value,  IN  SIZE_T              ValueLength,  OUT PSIZE_T             ResultLength OPTIONAL) {
 
   //FIXME: Find another way to unload it all
   if ((Value == (PUCHAR)0x13371337) && (Type == (DWORD*)0x13371337)) {
-	  hook(NULL);
-	  return 0x13371337;
+    hook(NULL);
+    return 0x13371337;
   }
 
   // This function usually gets called first, so until I have some other "Startup" hook this will have to do..
   installIoDebugger();
   installBreakpoints();
 
-	char x[600];
-	char* p = timestamp(x);	
+  char x[600];
+  char* p = timestamp(x);  
   p = &p[he->RtlSprintf(p,he->stringExQueryNonVolatileSettingArguments,ValueIndex,Type,Value,ValueLength,ResultLength)];
-	NTSTATUS ret = he->ExQueryNonVolatileSetting(ValueIndex,Type,Value,ValueLength,ResultLength);
-	p = hexString(p,(uint8_t*)&ret,-4); p = symbol(p,',');
-	appendFile(he->crash,x);
+  NTSTATUS ret = he->ExQueryNonVolatileSetting(ValueIndex,Type,Value,ValueLength,ResultLength);
+  p = hexString(p,(uint8_t*)&ret,-4); p = symbol(p,',');
+  appendFile(he->crash,x);
   p = x; *p = '\0';
-	p = symbol(p,'D'); p = symbol(p,':'); p = hexString(p,(uint8_t*)Value,ResultLength?*ResultLength:ValueLength);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  p = symbol(p,'D'); p = symbol(p,':'); p = hexString(p,(uint8_t*)Value,ResultLength?*ResultLength:ValueLength);
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
 VOID NTAPI hookKeInitializeDpc(KDPC *Dpc,   PKDEFERRED_ROUTINE   DeferredRoutine, PVOID                DeferredContext) {
-	char x[100];
-  char* p = timestamp(x);	
+  char x[100];
+  char* p = timestamp(x);  
   p = &p[he->RtlSprintf(p,he->stringKeInitializeDpcArguments,Dpc,DeferredRoutine,DeferredContext)];
   he->KeInitializeDpc(Dpc,DeferredRoutine,DeferredContext);
-	p = symbol(p,'\n');
+  p = symbol(p,'\n');
 
   KIRQL irql = he->KeGetCurrentIrql();
   if (irql == PASSIVE_LEVEL) {
-	  appendFile(he->crash,x);  
+    appendFile(he->crash,x);  
+  }
+
+  return;
+}
+
+#if 1
+/*
+
+  Crazy Taxi 3: HR with Composite:
+
+  <      6630,IRQL:0,T:D0021018>: AvSendTVEncoderOption(0x00000000,0x00000006,0x00000000,0x00076808) << get encoder settings
+  <      6630,IRQL:0,T:D0021018>: AvSendTVEncoderOption(0xFD000000,0x0000000B,0x00000005,0x00000000) << flicker filter
+  <      6637,IRQL:0,T:D0021018>: AvSendTVEncoderOption(0xFD000000,0x0000000E,0x00000000,0x00000000) << soften filter
+  <     10731,IRQL:0,T:D0021018>: AvSetDisplayMode(0xFD000000,0x00000000,0x00000000,0x00000012,0x00000A00,0x03A44000) = 0x00000000 << 640x?
+  <     10850,IRQL:0,T:D0021018>: AvSendTVEncoderOption(0xFD000000,0x0000000F,0x00000000,0xD0032C10)
+  <     10850,IRQL:0,T:D0021018>: AvSendTVEncoderOption(0xFD000000,0x00000009,0x00000000,0x00000000) << videoenable
+
+*/
+
+// Foxyfied version of OpenXDK Video stuff
+
+DWORD pXVideoGetEncoderSettings(void) {
+  DWORD dwEncoderSettings;
+	he->AvSendTVEncoderOption((PVOID)VIDEO_BASE, VIDEO_ENC_GET_SETTINGS, 0, (ULONG*)&dwEncoderSettings);
+	return dwEncoderSettings;
+}
+
+void fillMemory(uint8_t* data, uint8_t pattern, size_t size) {
+  size_t i;
+  for(i = 0; i < size; i++) {
+    data[i] = pattern;
+  }
+  return;
+}
+
+VIDEO_MODE_SETTING* findChihiroVideoMode(IN ULONG  Mode,IN ULONG  Pitch) {
+  // Find the current Xbox mode
+  VIDEO_MODE_SETTING* pChihiroVidMode;
+  int i;
+	for(i=0; i<he->iVidModes; i++) {
+		pChihiroVidMode = &he->vidModes[i];
+		if(pChihiroVidMode->dwMode != Mode) { continue; }
+//FIXME: Calculate bpp using Format		if((pChihiroVidMode->width*(bpp/8)) != Pitch) { continue; }
+  	break;
+	}
+	if(i >= he->iVidModes) { // No compatible mode found
+		return NULL;
+	}
+  return pChihiroVidMode;
+}
+
+bool pXVideoSetMode(int width, int height, int refresh, IN ULONG  Step, IN ULONG  Format, IN ULONG  Pitch, IN PVOID  RegisterBase, IN ULONG  FrameBuffer) {
+	VIDEO_MODE_SETTING *pVidMode = NULL;
+	int vidRefresh = 0;
+	int i = 0;
+
+	DWORD dwEnc = pXVideoGetEncoderSettings();
+	
+	DWORD dwAdapter		= dwEnc & 0x000000FF;
+	DWORD dwStandard	= dwEnc & 0x0000FF00;
+
+/*
+	if(bpp != 16 && bpp != 32) {
+		bpp = 32;
+  }
+*/
+
+	if(refresh > 0) {
+		vidRefresh = refresh;
+	} else {
+    //60Hz refresh rate
+		vidRefresh = (dwEnc & 0x00400000)?60:50;
+  }
+
+  // Find the new mode to set
+
+	for(i=0; i<he->iVidModes; i++) {
+		pVidMode = &he->vidModes[i];
+		if((pVidMode->dwFlags & 0x000000FF) != dwAdapter) {	continue; }
+		if(pVidMode->dwStandard != dwStandard) { continue; }
+		if(pVidMode->width != width || pVidMode->height != height) { continue; }
+		if(pVidMode->refresh != vidRefresh) { continue; }
+  	break;
 	}
 
-	return;
+	if(i >= he->iVidModes) { // No compatible mode found
+		return false;
+	}
+
+//	XVideoInit(pVidMode->dwMode, pVidMode->width, pVidMode->height, 
+  he->AvSetDisplayMode(RegisterBase, Step, pVidMode->dwMode, Format, Pitch, FrameBuffer);
+
+  return true;
+}
+#endif
+
+bool findDisplayMode(IN PVOID  RegisterBase,IN ULONG  Step,IN ULONG  Mode,IN ULONG  Format,IN ULONG  Pitch,IN ULONG  FrameBuffer) {
+
+#ifdef VIDEO_HOOK
+  // Let original code handle "Video off"
+  if (Mode == 0x00000000) {
+    STRING(mode,"Mode will turn video off!\\n")
+    appendFile(he->crash,mode);
+    return false;
+  }
+
+  // Attempt to find the video mode Chihiro is going for
+  VIDEO_MODE_SETTING* chihiro = findChihiroVideoMode(Mode,Pitch);
+  if (chihiro == NULL) {  
+    STRING(mode,"Mode not found\\n")
+    appendFile(he->crash,mode);
+    return false;
+  }
+
+  char x[100];
+  STRING(mode,"Mode is %%i x %%i (%%i Hz)\\n")
+  he->RtlSprintf(x,mode,chihiro->width, chihiro->height, chihiro->refresh);
+  appendFile(he->crash,x);
+
+  return pXVideoSetMode(chihiro->width, chihiro->height, chihiro->refresh, Step, Format, Pitch, RegisterBase, FrameBuffer);
+#else
+  return false;
+#endif
+
 }
 
-VOID NTAPI hookAvSendTVEncoderOption(IN	PVOID	RegisterBase, IN	ULONG	Option, IN	ULONG	Param, OUT	ULONG	*Result) {
-	char x[200];
-  char* p = timestamp(x);	
+VOID NTAPI hookAvSendTVEncoderOption(IN  PVOID  RegisterBase, IN  ULONG  Option, IN  ULONG  Param, OUT  ULONG  *Result) {
+  char x[200];
+  char* p = timestamp(x);  
   p = &p[he->RtlSprintf(p,he->stringAvSendTVEncoderOptionArguments,RegisterBase,Option,Param,Result)];
-	he->AvSendTVEncoderOption(RegisterBase,Option,Param,Result);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return;
+  he->AvSendTVEncoderOption(RegisterBase,Option,Param,Result);
+#ifdef VIDEO_HOOK
+if (Option == VIDEO_ENC_GET_SETTINGS)	{
+  // Pretend that we always have the HD Pack [WWCD? (What would Chihiro do?)]
+  *Result = *Result & 0xFFFF0000;
+  *Result = *Result | (VIDEO_REGION_NTSCJ << 8); // Video Standard
+  *Result = *Result | (VIDEO_ADAPTER_RGBSCART /*HDTV*/ << 0); // Adapter
+}
+#endif
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return;
 }
 
-ULONG NTAPI hookAvSetDisplayMode(IN PVOID	RegisterBase,IN ULONG	Step,IN ULONG	Mode,IN ULONG	Format,IN ULONG	Pitch,IN ULONG	FrameBuffer) {
-	char x[200];
-	char* p = timestamp(x);
+ULONG NTAPI hookAvSetDisplayMode(IN PVOID  RegisterBase,IN ULONG  Step,IN ULONG  Mode,IN ULONG  Format,IN ULONG  Pitch,IN ULONG  FrameBuffer) {
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringAvSetDisplayModeArguments,RegisterBase,Step,Mode,Format,Pitch,FrameBuffer)];
-  ULONG ret = he->AvSetDisplayMode(RegisterBase,Step,Mode,Format,Pitch,FrameBuffer);
-	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  ULONG ret;
+  if (findDisplayMode(RegisterBase,Step,Mode,Format,Pitch,FrameBuffer)) {
+    ret = 0;
+  } else {
+    ret = he->AvSetDisplayMode(RegisterBase,Step,Mode,Format,Pitch,FrameBuffer);
+  }
+  p = hexString(p,(uint8_t*)&ret,-4);  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
 NTSTATUS NTAPI hookNtSetIoCompletion(IN HANDLE IoCompletionHandle,IN PVOID KeyContext,IN PVOID ApcContext,IN NTSTATUS IoStatus,IN ULONG_PTR IoStatusInformation) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringNtSetIoCompletionArguments,IoCompletionHandle,KeyContext,ApcContext,IoStatus,IoStatusInformation)];
   NTSTATUS ret = he->NtSetIoCompletion(IoCompletionHandle,KeyContext,ApcContext,IoStatus,IoStatusInformation);
-	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  p = hexString(p,(uint8_t*)&ret,-4);  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
 #define EEPROM_SMBUS_WRITE 0xA8
@@ -827,11 +1112,11 @@ ULONG NTAPI hookHalReadSMBusValue(UCHAR   Address,UCHAR   Command,BOOLEAN WordFl
         Value[0] = he->chihiroXboxEeprom[Command+0];
         Value[1] = he->chihiroXboxEeprom[Command+1];
       }
-	    char x[200];
-	    char* p = timestamp(x);
+      char x[200];
+      char* p = timestamp(x);
 //      STRING(t1,"Emulated eeprom read!\\n");
-	    p = symbol(p,'X');	    p = symbol(p,'X');	    p = symbol(p,'X');
-	    appendFile(he->crash,x);
+      p = symbol(p,'X');      p = symbol(p,'X');      p = symbol(p,'X');
+      appendFile(he->crash,x);
 
       return 0;
     }
@@ -844,212 +1129,212 @@ ULONG NTAPI hookHalReadSMBusValue(UCHAR   Address,UCHAR   Command,BOOLEAN WordFl
         he->chihiroXboxEeprom[Command+0] = Value[0];
         he->chihiroXboxEeprom[Command+1] = Value[1];
       }
-	    char x[200];
-	    char* p = timestamp(x);
+      char x[200];
+      char* p = timestamp(x);
 //      STRING(t2,"Emulated eeprom write!\\n");
-	    p = symbol(p,'X');	    p = symbol(p,'Y');	    p = symbol(p,'X');
-	    appendFile(he->crash,x);
+      p = symbol(p,'X');      p = symbol(p,'Y');      p = symbol(p,'X');
+      appendFile(he->crash,x);
 
       return 0;
     }
 
   }
 
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringHalReadSMBusValueArguments,Address,Command,WordFlag,Value)];
   ULONG ret = he->HalReadSMBusValue(Address,Command,WordFlag,Value);
-	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = hexString(p,(uint8_t*)&ret,-4);  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return ret;
 }
 ULONG NTAPI hookHalWriteSMBusValue(UCHAR Address, UCHAR Command, BOOLEAN WordFlag, ULONG Value) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringHalWriteSMBusValueArguments,Address,Command,WordFlag,Value)];
   ULONG ret = he->HalWriteSMBusValue(Address,Command,WordFlag,Value);
-	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = hexString(p,(uint8_t*)&ret,-4);  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return ret;
 }
 VOID NTAPI hookHalReadWritePCISpace(IN ULONG   BusNumber,IN ULONG   SlotNumber,IN ULONG   RegisterNumber,IN PVOID   Buffer,IN ULONG   Length,IN BOOLEAN WritePCISpace) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringHalReadWritePCISpaceArguments,BusNumber,SlotNumber,RegisterNumber,Buffer,Length,WritePCISpace)];
   he->HalReadWritePCISpace(BusNumber,SlotNumber,RegisterNumber,Buffer,Length,WritePCISpace);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return;
 }
 VOID NTAPI hookHalReturnToFirmware(RETURN_FIRMWARE Routine) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringHalReturnToFirmwareArguments,Routine)];
-	p = symbol(p,'\n');
- 	appendFile(he->crash,x);
+  p = symbol(p,'\n');
+   appendFile(he->crash,x);
   he->HalReturnToFirmware(Routine);
 }
 VOID NTAPI hookREAD_PORT_BUFFER_UCHAR(IN PUCHAR Port,IN PUCHAR Buffer,IN ULONG  Count) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringReadPortArguments,'B',Port,Buffer,Count)];
   he->READ_PORT_BUFFER_UCHAR(Port,Buffer,Count);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return;
 }
 VOID NTAPI hookREAD_PORT_BUFFER_USHORT(IN PUSHORT Port,IN PUSHORT Buffer,IN ULONG   Count) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringReadPortArguments,'W',Port,Buffer,Count)];
   he->READ_PORT_BUFFER_USHORT(Port,Buffer,Count);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return;
 }
 VOID NTAPI hookREAD_PORT_BUFFER_ULONG(IN PULONG Port,IN PULONG Buffer,IN ULONG  Count) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringReadPortArguments,'L',Port,Buffer,Count)];
   he->READ_PORT_BUFFER_ULONG(Port,Buffer,Count);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return;
 }
 VOID NTAPI hookWRITE_PORT_BUFFER_UCHAR(IN PUCHAR Port,IN PUCHAR Buffer,IN ULONG  Count) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringWritePortArguments,'B',Port,Buffer,Count)];
   he->WRITE_PORT_BUFFER_UCHAR(Port,Buffer,Count);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return;
 }
 VOID NTAPI hookWRITE_PORT_BUFFER_USHORT(IN PUSHORT Port,IN PUSHORT Buffer,IN ULONG   Count) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringWritePortArguments,'W',Port,Buffer,Count)];
   he->WRITE_PORT_BUFFER_USHORT(Port,Buffer,Count);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return;
 }
 VOID NTAPI hookWRITE_PORT_BUFFER_ULONG(IN PULONG Port,IN PULONG Buffer,IN ULONG  Count) {
-	char x[200];
-	char* p = timestamp(x);
+  char x[200];
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringWritePortArguments,'L',Port,Buffer,Count)];
   he->WRITE_PORT_BUFFER_ULONG(Port,Buffer,Count);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return;
 }
 
-NTSTATUS NTAPI hookNtCreateFile(OUT PHANDLE             FileHandle, IN  ACCESS_MASK         DesiredAccess,IN  POBJECT_ATTRIBUTES	ObjectAttributes,OUT PIO_STATUS_BLOCK	IoStatusBlock,IN  PLARGE_INTEGER	    AllocationSize OPTIONAL, IN  ULONG	            FileAttributes, IN  ULONG	            ShareAccess, IN  ULONG	            CreateDisposition, IN  ULONG	            CreateOptions) {
-	char x[500];
-	char* p = timestamp(x);
+NTSTATUS NTAPI hookNtCreateFile(OUT PHANDLE             FileHandle, IN  ACCESS_MASK         DesiredAccess,IN  POBJECT_ATTRIBUTES  ObjectAttributes,OUT PIO_STATUS_BLOCK  IoStatusBlock,IN  PLARGE_INTEGER      AllocationSize OPTIONAL, IN  ULONG              FileAttributes, IN  ULONG              ShareAccess, IN  ULONG              CreateDisposition, IN  ULONG              CreateOptions) {
+  char x[500];
+  char* p = timestamp(x);
   ANSI_STRING* n = ObjectAttributes->ObjectName;
   p = &p[he->RtlSprintf(p,he->stringNtCreateFileArguments,FileHandle, DesiredAccess, ObjectAttributes, n->Length, n->Buffer, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions)];
-	NTSTATUS ret = he->NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions);
-	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,',');
-	p = hexString(p,(uint8_t*)FileHandle,-4);	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  NTSTATUS ret = he->NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions);
+  p = hexString(p,(uint8_t*)&ret,-4);  p = symbol(p,',');
+  p = hexString(p,(uint8_t*)FileHandle,-4);  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
 NTSTATUS NTAPI hookNtOpenFile(OUT PHANDLE             FileHandle,IN  ACCESS_MASK         DesiredAccess,IN  POBJECT_ATTRIBUTES  ObjectAttributes,OUT PIO_STATUS_BLOCK    IoStatusBlock,IN  ULONG               ShareAccess,IN  ULONG               OpenOptions) {
   char x[500];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   ANSI_STRING* n = ObjectAttributes->ObjectName;
   p = &p[he->RtlSprintf(p,he->stringNtOpenFileArguments,FileHandle, DesiredAccess, ObjectAttributes, n->Length, n->Buffer,IoStatusBlock, ShareAccess, OpenOptions)];
   NTSTATUS ret = he->NtOpenFile(FileHandle,DesiredAccess,ObjectAttributes,IoStatusBlock, ShareAccess, OpenOptions);
-	p = hexString(p,(uint8_t*)&ret,-4);	p = symbol(p,',');
-	p = hexString(p,(uint8_t*)FileHandle,-4);	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  p = hexString(p,(uint8_t*)&ret,-4);  p = symbol(p,',');
+  p = hexString(p,(uint8_t*)FileHandle,-4);  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
 BOOLEAN NTAPI hookRtlTryEnterCriticalSection(IN PRTL_CRITICAL_SECTION CriticalSection) {
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringRtlTryEnterCriticalSectionArguments,CriticalSection)];
-	appendFile(he->crash,x); p = x; *p = '\0';
+  appendFile(he->crash,x); p = x; *p = '\0';
   BOOLEAN ret = he->RtlTryEnterCriticalSection(CriticalSection);
-	p = symbol(p,(ret==TRUE)?'1':'0');
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  p = symbol(p,(ret==TRUE)?'1':'0');
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
 VOID NTAPI hookRtlEnterCriticalSection(IN PRTL_CRITICAL_SECTION CriticalSection) {
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringRtlEnterCriticalSectionArguments,CriticalSection)];
   he->RtlEnterCriticalSection(CriticalSection);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return;
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return;
 }
 
 VOID NTAPI hookRtlLeaveCriticalSection(IN PRTL_CRITICAL_SECTION CriticalSection) {
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringRtlLeaveCriticalSectionArguments,CriticalSection)];
   he->RtlLeaveCriticalSection(CriticalSection);
-	p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return;
+  p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return;
 }
 
 /*NTHALAPI*/ KIRQL FASTCALL hookKfRaiseIrql(IN KIRQL NewIrql){
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKfRaiseIrqlArguments,NewIrql)];
-	appendFile(he->crash,x); p = x; *p = '\0';
+  appendFile(he->crash,x); p = x; *p = '\0';
   KIRQL ret = he->KfRaiseIrql(NewIrql);
-	p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
 /*NTHALAPI*/ VOID FASTCALL hookKfLowerIrql(IN KIRQL NewIrql) {
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKfLowerIrqlArguments,NewIrql)];
   he->KfLowerIrql(NewIrql);
   p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return;
+  appendFile(he->crash,x);
+  return;
 }
 
 NTHALAPI KIRQL hookKeRaiseIrqlToDpcLevel(void) {
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKeRaiseIrqlToDpcLevelArguments)];
-	appendFile(he->crash,x); p = x; *p = '\0';
+  appendFile(he->crash,x); p = x; *p = '\0';
   KIRQL ret = he->KeRaiseIrqlToDpcLevel();
-	p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
 NTHALAPI KIRQL hookKeRaiseIrqlToSynchLevel(void) {
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKeRaiseIrqlToSynchLevelArguments)];
-	appendFile(he->crash,x); p = x; *p = '\0';
+  appendFile(he->crash,x); p = x; *p = '\0';
   KIRQL ret = he->KeRaiseIrqlToSynchLevel();
-	p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
-	appendFile(he->crash,x);
-	return ret;
+  p = hexString(p,(uint8_t*)&ret,-sizeof(ret)); p = symbol(p,'\n');
+  appendFile(he->crash,x);
+  return ret;
 }
 
-NTSTATUS NTAPI hookKeDelayExecutionThread(IN KPROCESSOR_MODE  WaitMode,IN BOOLEAN          Alertable,IN PLARGE_INTEGER   Interval) {
+NTSTATUS NTAPI hookKeDelayExecutionThread(IN KPROCESSOR_MODE  WaitMode,IN BOOLEAN Alertable,IN PLARGE_INTEGER Interval) {
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,he->stringKeDelayExecutionThreadArguments,WaitMode,Alertable,Interval)];
   NTSTATUS ret = he->KeDelayExecutionThread(WaitMode,Alertable,Interval);
-	p = hexString(p,(uint8_t*)&ret,-4); p = symbol(p,'\n');
-	appendFile(he->crash,x);
+  p = hexString(p,(uint8_t*)&ret,-4); p = symbol(p,'\n');
+  appendFile(he->crash,x);
   return ret;
 }
 
@@ -1057,11 +1342,11 @@ NTSTATUS NTAPI hookNtClose(IN HANDLE Handle) {
   STRING(pre,"NtClose(0x%%08X) = ")
   STRING(post,"0x%%08X\\n")
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,pre,Handle)];
   NTSTATUS ret = he->NtClose(Handle);
   p = &p[he->RtlSprintf(p,post,ret)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return ret;
 }
 
@@ -1069,122 +1354,110 @@ NTSTATUS NTAPI hookKeWaitForSingleObject(IN PVOID Object,IN KWAIT_REASON WaitRea
   STRING(pre,"KeWaitForSingleObject(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
   STRING(post,"0x%%08X\\n")
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,pre,Object,WaitReason,WaitMode,Alertable,Timeout)];
   NTSTATUS ret = he->KeWaitForSingleObject(Object,WaitReason,WaitMode,Alertable,Timeout);
   p = &p[he->RtlSprintf(p,post,ret)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return ret;
 }
 NTSTATUS NTAPI  hookIoCreateDevice(IN PDRIVER_OBJECT DriverObject,IN ULONG DeviceExtensionSize,IN POBJECT_STRING DeviceName OPTIONAL,IN DEVICE_TYPE DeviceType,IN BOOLEAN Exclusive,OUT PDEVICE_OBJECT *DeviceObject){
-  STRING(pre,"IoCreateDevice(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
+  STRING(pre,"IoCreateDevice(0x%%08X,0x%%08X,0x%%08X (%%*s),0x%%08X,0x%%08X,0x%%08X) = ")
   STRING(post,"0x%%08X\\n")
   char x[200];
-	char* p = timestamp(x);
-  p = &p[he->RtlSprintf(p,pre,DriverObject,DeviceExtensionSize,DeviceName,DeviceType,Exclusive,DeviceObject)];
+  char* p = timestamp(x);
+  p = &p[he->RtlSprintf(p,pre,DriverObject,DeviceExtensionSize,DeviceName,DeviceName?DeviceName->Length:0,DeviceName?DeviceName->Buffer:x /*just use any string which exists*/,DeviceType,Exclusive,DeviceObject)];
   NTSTATUS ret = he->IoCreateDevice(DriverObject,DeviceExtensionSize,DeviceName,DeviceType,Exclusive,DeviceObject);
   p = &p[he->RtlSprintf(p,post,ret)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return ret;
 }
 VOID NTAPI  hookKeInitializeEvent(IN PRKEVENT Event,IN EVENT_TYPE Type,IN BOOLEAN State){
   STRING(pre,"KeInitializeEvent(0x%%08X,0x%%08X,0x%%08X) = ")
   STRING(post,"0x%%08X\\n")
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,pre,Event,Type,State)];
   he->KeInitializeEvent(Event,Type,State);
   p = &p[he->RtlSprintf(p,post)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return;
 }
 PVOID NTAPI hookMmAllocateContiguousMemoryEx(IN SIZE_T NumberOfBytes,IN ULONG_PTR LowestAcceptableAddress,IN ULONG_PTR HighestAcceptableAddress,IN ULONG_PTR Alignment,IN ULONG Protect){
   STRING(pre,"MmAllocateContiguousMemoryEx(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
   STRING(post,"0x%%08X\\n")
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,pre,NumberOfBytes,LowestAcceptableAddress,HighestAcceptableAddress,Alignment,Protect)];
   PVOID ret = he->MmAllocateContiguousMemoryEx(NumberOfBytes,LowestAcceptableAddress,HighestAcceptableAddress,Alignment,Protect);
   p = &p[he->RtlSprintf(p,post,ret)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return ret;
 }
 VOID NTAPI  hookRtlInitializeCriticalSection(IN PRTL_CRITICAL_SECTION CriticalSection){
   STRING(pre,"RtlInitializeCriticalSection(0x%%08X) = ")
   STRING(post,"\\n")
   char x[200];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,pre,CriticalSection)];
   he->RtlInitializeCriticalSection(CriticalSection);
   p = &p[he->RtlSprintf(p,post)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return;
 }
 NTSTATUS NTAPI hookPsCreateSystemThreadEx(OUT PHANDLE ThreadHandle,IN SIZE_T ThreadExtensionSize,IN SIZE_T KernelStackSize,IN SIZE_T TlsDataSize,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN CreateSuspended,IN BOOLEAN DebuggerThread,IN PKSYSTEM_ROUTINE SystemRoutine OPTIONAL){
   STRING(pre,"PsCreateSystemThreadEx(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
   STRING(post,"0x%%08X\\n")
   char x[400];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,pre,ThreadHandle,ThreadExtensionSize,KernelStackSize,TlsDataSize,ThreadId,StartRoutine,StartContext,CreateSuspended,DebuggerThread,SystemRoutine)];
   NTSTATUS ret = he->PsCreateSystemThreadEx(ThreadHandle,ThreadExtensionSize,KernelStackSize,TlsDataSize,ThreadId,StartRoutine,StartContext,CreateSuspended,DebuggerThread,SystemRoutine);
   p = &p[he->RtlSprintf(p,post,ret)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return ret;
 }
 NTSTATUS NTAPI  hookPsCreateSystemThread(OUT PHANDLE ThreadHandle,OUT PHANDLE ThreadId OPTIONAL,IN PKSTART_ROUTINE StartRoutine,IN PVOID StartContext,IN BOOLEAN DebuggerThread){
   STRING(pre,"PsCreateSystemThread(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
   STRING(post,"0x%%08X\\n")
   char x[400];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,pre,ThreadHandle,ThreadId,StartRoutine,StartContext,DebuggerThread)];
   NTSTATUS ret = he->PsCreateSystemThread(ThreadHandle,ThreadId,StartRoutine,StartContext,DebuggerThread);
   p = &p[he->RtlSprintf(p,post,ret)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return ret;
 }
 NTSTATUS NTAPI hookNtReadFile(IN HANDLE FileHandle,IN HANDLE Event OPTIONAL,IN PIO_APC_ROUTINE ApcRoutine OPTIONAL,IN PVOID ApcContext OPTIONAL,OUT PIO_STATUS_BLOCK IoStatusBlock,OUT PVOID Buffer,IN ULONG Length,IN PLARGE_INTEGER ByteOffset OPTIONAL){
   STRING(pre,"NtReadFile(0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X,0x%%08X) = ")
   STRING(post,"0x%%08X\\n")
   char x[400];
-	char* p = timestamp(x);
+  char* p = timestamp(x);
   p = &p[he->RtlSprintf(p,pre,FileHandle,Event,ApcRoutine,ApcContext,IoStatusBlock,Buffer,Length,ByteOffset)];
   NTSTATUS ret = he->NtReadFile(FileHandle,Event,ApcRoutine,ApcContext,IoStatusBlock,Buffer,Length,ByteOffset);
   p = &p[he->RtlSprintf(p,post,ret)];
-	appendFile(he->crash,x);
+  appendFile(he->crash,x);
   return ret;
 }
 
 
 HookEnvironment_t* hook(void* base) {
 
-  // This is the image of the chihiro xbox eeprom we will start the system with (may be modified later in environment)
-  //NOTE: From MAME. Should be 0x100 bytes, but only 112 bytes included?!
-  uint8_t chihiroXboxEeprom[0x100] = {
-    0x94,0x18,0x10,0x59,0x83,0x58,0x15,0xDA,0xDF,0xCC,0x1D,0x78,0x20,0x8A,0x61,0xB8,
-    0x08,0xB4,0xD6,0xA8,0x9E,0x77,0x9C,0xEB,0xEA,0xF8,0x93,0x6E,0x3E,0xD6,0x9C,0x49,
-    0x6B,0xB5,0x6E,0xAB,0x6D,0xBC,0xB8,0x80,0x68,0x9D,0xAA,0xCD,0x0B,0x83,0x17,0xEC,
-    0x2E,0xCE,0x35,0xA8,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x61,0x62,0x63,
-    0xAA,0xBB,0xCC,0xDD,0xEE,0xFF,0x00,0x00,0x4F,0x6E,0x6C,0x69,0x6E,0x65,0x6B,0x65,
-    0x79,0x69,0x6E,0x76,0x61,0x6C,0x69,0x64,0x00,0x03,0x80,0x00,0x00,0x00,0x00,0x00,
-    0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
-  };
-
   // Code..
 
   HookEnvironment_t* environment;
 
-	uintptr_t kernel = 0x80010000;
-	uintptr_t kernelHeader = kernel + *(uint32_t*)(kernel+0x3C);	
-	uintptr_t exportDirectoryTable = kernel + *(uint32_t*)(kernelHeader+0x78); //FIXME: This is pretty dirty?! going accross table borders etc - ignoring size?!
-	uint32_t* exportAddressTableRva = (uint32_t*)(kernel + *(uint32_t*)(exportDirectoryTable+0x1C));
-	uint32_t ordinalBase = *(uint32_t*)(exportDirectoryTable+0x10);
-	exportAddressTableRva = &exportAddressTableRva[-ordinalBase]; // Base offet
+  uintptr_t kernel = 0x80010000;
+  uintptr_t kernelHeader = kernel + *(uint32_t*)(kernel+0x3C);  
+  uintptr_t exportDirectoryTable = kernel + *(uint32_t*)(kernelHeader+0x78); //FIXME: This is pretty dirty?! going accross table borders etc - ignoring size?!
+  uint32_t* exportAddressTableRva = (uint32_t*)(kernel + *(uint32_t*)(exportDirectoryTable+0x1C));
+  uint32_t ordinalBase = *(uint32_t*)(exportDirectoryTable+0x10);
+  exportAddressTableRva = &exportAddressTableRva[-ordinalBase]; // Base offet
 
-	// Initiate an unload first
-	if (base!=NULL) {
-    NTSTATUS NTAPI(*reloadedExQueryNonVolatileSetting)(IN  DWORD               ValueIndex,	OUT DWORD              *Type,	OUT PUCHAR              Value,	IN  SIZE_T              ValueLength,	OUT PSIZE_T             ResultLength OPTIONAL);
+  // Initiate an unload first
+  if (base!=NULL) {
+    NTSTATUS NTAPI(*reloadedExQueryNonVolatileSetting)(IN  DWORD               ValueIndex,  OUT DWORD              *Type,  OUT PUCHAR              Value,  IN  SIZE_T              ValueLength,  OUT PSIZE_T             ResultLength OPTIONAL);
     reloadedExQueryNonVolatileSetting = (void*)(kernel + exportAddressTableRva[24]);
-		reloadedExQueryNonVolatileSetting(0,(DWORD*)0x13371337,(PUCHAR)0x13371337,0,NULL);
+    reloadedExQueryNonVolatileSetting(0,(DWORD*)0x13371337,(PUCHAR)0x13371337,0,NULL);
     //FIXME: If this returned 0x13371337 we know that we just unloaded our hook!
 
     // Fill the new environment
@@ -1197,24 +1470,24 @@ HookEnvironment_t* hook(void* base) {
     // Kernel variables
     environment->XeImageFileName = (ANSI_STRING*)&XeImageFileName;
     environment->KeTickCount = (DWORD*)&KeTickCount;
-	  // Functions
+    // Functions
     environment->NtWriteFile = NtWriteFile;
-	  environment->NtQueryInformationFile = NtQueryInformationFile;
-	  environment->NtSetInformationFile = NtSetInformationFile;
-	  environment->MmAllocateContiguousMemory = MmAllocateContiguousMemory;
+    environment->NtQueryInformationFile = NtQueryInformationFile;
+    environment->NtSetInformationFile = NtSetInformationFile;
+    environment->MmAllocateContiguousMemory = MmAllocateContiguousMemory;
     environment->KeGetCurrentThread = (void*)KeGetCurrentThread;
     // (Imported by ordinal because OpenXDK sucks)
-    #define IMPORT(o,x) {	environment->x = (void*)(kernel+exportAddressTableRva[o]); }
+    #define IMPORT(o,x) {  environment->x = (void*)(kernel+exportAddressTableRva[o]); }
     IMPORT(362,RtlSprintf);
     IMPORT(103,KeGetCurrentIrql);
     IMPORT(119,KeInsertQueueDpc);
-	  // Hooked functions
-	  // 	 These must be imported by ordinal because if this launcher is started
-	  // 	 with an already hooked kernel (mostly during development after recompile)
-	  // 	 it would hook the already hooked functions.
-	  // 	 To avoid this I use hook(NULL) to turn it back to normal.
-	  // 	 However, this will restore the export table - but this launcher still uses
-	  // 	 the old (hooked) export table, so we have to "reimport" manually
+    // Hooked functions
+    //    These must be imported by ordinal because if this launcher is started
+    //    with an already hooked kernel (mostly during development after recompile)
+    //    it would hook the already hooked functions.
+    //    To avoid this I use hook(NULL) to turn it back to normal.
+    //    However, this will restore the export table - but this launcher still uses
+    //    the old (hooked) export table, so we have to "reimport" manually
     IMPORT(0x9F,KeWaitForSingleObject)
     IMPORT(0x41,IoCreateDevice)
     IMPORT(0x6C,KeInitializeEvent)
@@ -1241,7 +1514,7 @@ HookEnvironment_t* hook(void* base) {
     IMPORT(2,AvSendTVEncoderOption)
     IMPORT(3,AvSetDisplayMode)
     IMPORT(107,KeInitializeDpc)
-	  IMPORT(190,NtCreateFile)
+    IMPORT(190,NtCreateFile)
     IMPORT(202,NtOpenFile)
     IMPORT(227,NtSetIoCompletion)
     IMPORT(0x126,RtlLeaveCriticalSection)
@@ -1252,7 +1525,7 @@ HookEnvironment_t* hook(void* base) {
     IMPORT(0x82,KeRaiseIrqlToSynchLevel)
     IMPORT(24,ExQueryNonVolatileSetting)
     IMPORT(0xA1,KfLowerIrql)
-	  // Data
+    // Data
     memcpy(environment->chihiroXboxEeprom,chihiroXboxEeprom,0x100);
     strcpy(environment->stringXbe,"XBE: ");
     strcpy(environment->stringEip,"EIP: 0x");
@@ -1294,6 +1567,10 @@ HookEnvironment_t* hook(void* base) {
     strcpy(environment->stringKfLowerIrqlArguments,"KfLowerIrql(0x%X)");
     strcpy(environment->stringKfRaiseIrqlArguments,"KfRaiseIrql(0x%X) = 0x");
     strcpy(environment->stringKeDelayExecutionThreadArguments,"KeDelayExecutionThread(0x%08X,0x%08X,0x%08X) = 0x");
+    environment->buffer = NULL;
+//    installBuffer(&environment->buffer); //FIXME: he->GetCurrentIrql crashes here.. find a way to do this without "he->"
+    environment->iVidModes = sizeof(pVidModes) / sizeof(VIDEO_MODE_SETTING);
+    memcpy(environment->vidModes,pVidModes,sizeof(pVidModes));
   } else {
     environment = NULL; //TODO: Possibly return previous environment?
   }
@@ -1329,7 +1606,7 @@ HookEnvironment_t* hook(void* base) {
   EXPORT(2,AvSendTVEncoderOption)
   EXPORT(3,AvSetDisplayMode)
   EXPORT(107,KeInitializeDpc)
-	EXPORT(190,NtCreateFile)
+  EXPORT(190,NtCreateFile)
   EXPORT(202,NtOpenFile)
   EXPORT(227,NtSetIoCompletion)
   EXPORT(0x126,RtlLeaveCriticalSection)
@@ -1340,7 +1617,7 @@ HookEnvironment_t* hook(void* base) {
   // The following exports play a role in the whole hook foundation, they can not be disabled!
   EXPORT(24,ExQueryNonVolatileSetting)
   EXPORT(0xA1,KfLowerIrql)
-	return environment;
+  return environment;
 }
 
 void hookEnvironment(void) { return; }
@@ -1350,12 +1627,12 @@ void hookEnvironment(void) { return; }
 //TODO: Merge with hook()
 void installHook(void* base) {
 
-	uintptr_t kernel = 0x80010000;
-	uintptr_t kernelHeader = kernel + *(uint32_t*)(kernel+0x3C);	
-	uintptr_t exportDirectoryTable = kernel + *(uint32_t*)(kernelHeader+0x78); //FIXME: This is pretty dirty?! going accross table borders etc - ignoring size?!
-	uint32_t* exportAddressTableRva = (uint32_t*)(kernel + *(uint32_t*)(exportDirectoryTable+0x1C));
-	uint32_t ordinalBase = *(uint32_t*)(exportDirectoryTable+0x10);
-	exportAddressTableRva = &exportAddressTableRva[-ordinalBase]; // Base offet
+  uintptr_t kernel = 0x80010000;
+  uintptr_t kernelHeader = kernel + *(uint32_t*)(kernel+0x3C);  
+  uintptr_t exportDirectoryTable = kernel + *(uint32_t*)(kernelHeader+0x78); //FIXME: This is pretty dirty?! going accross table borders etc - ignoring size?!
+  uint32_t* exportAddressTableRva = (uint32_t*)(kernel + *(uint32_t*)(exportDirectoryTable+0x1C));
+  uint32_t ordinalBase = *(uint32_t*)(exportDirectoryTable+0x10);
+  exportAddressTableRva = &exportAddressTableRva[-ordinalBase]; // Base offet
 
   size_t hookFunctionSize = (uintptr_t)hookEnvironment - (uintptr_t)hookBase;
   size_t hookEnvironmentSize = sizeof(HookEnvironment_t);
@@ -1368,8 +1645,8 @@ void installHook(void* base) {
   printf("hook: %i + %i bytes, memory at 0x%08X\n",hookFunctionSize,hookEnvironmentSize,base);
   printf("hookBase: %X %X\n",hookBase,hookBase()); //TODO: ASSERT
 
-	// This can't be moved after creation!
-//	RtlInitializeCriticalSection(&localHookEnvironment->critSect);
+  // This can't be moved after creation!
+//  RtlInitializeCriticalSection(&localHookEnvironment->critSect);
   
 /*
   void(*hookCall)(void) = hook+(uintptr_t)test-(uintptr_t)hookBase;

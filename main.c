@@ -30,6 +30,7 @@
 
   TODO (In no particular order, but research should always be first):
   
+    - Investigate why hookall doesn't work anymore
     - Cleanup
     - Release kernel memory on hook(NULL) / size back kernel
     - Commit "fix.h" changes back to OpenXDK

@@ -226,4 +226,5 @@ typedef struct _KDPC {
 
 
 #define PASSIVE_LEVEL 0
+#define APC_LEVEL 1
 #define DISPATCH_LEVEL 2
